@@ -1,0 +1,34 @@
+{
+  "glm": {
+    "URL": "https://codeload.github.com/g-truc/glm/tar.gz/0af55ccecd98d4e5a8d1fad7de25ba429d60e863",
+    "SHA256": "e7f187d83523f505eb38dd25d297ea6c0d4ed856d733e808f18253f5a8fa88a0"
+  },
+  "glfw": {
+    "URL": "https://codeload.github.com/glfw/glfw/tar.gz/a74efa0d5628b74adc0426af4c5710e287fa7c2c",
+    "SHA256": "7e85e39ade1efdda00734d323a0230b5c938074e9fb2ddbe453bdbb281064d2c"
+  },
+  "json": {
+    "URL": "https://codeload.github.com/nlohmann/json/tar.gz/9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03",
+    "SHA256": "0dbc5e40a01ff142e7e68c03e85247a4dcede2f592d12d3677dee3664d17975a"
+  },
+  "bullet": {
+    "URL": "https://codeload.github.com/bulletphysics/bullet3/tar.gz/2c204c49e56ed15ec5fcfa71d199ab6d6570b3f5",
+    "SHA256": "f7c486f10b9f645d0577249d02855e076e8368babaa3d31ced6095e7162baee9"
+  },
+  "miniaudio": {
+    "URL": "https://codeload.github.com/mackron/miniaudio/tar.gz/f40cf03f80cdb7e741d43e53b7e706e8c1394bcf",
+    "SHA256": "412326cf55133404cbfb81ec8974b10149dc68732ce5bdeee8ba9cfc2695d646"
+  },
+  "nvrhi": {
+    "URL": "https://codeload.github.com/NVIDIA-RTX/NVRHI/tar.gz/6b96fb03e07539f08327aea76c56d55f1de9d906",
+    "SHA256": "f46c733ccc555fc457aaa3df510ee7df0ca089f5d1129d92903029e4fb67c560"
+  },
+  "lua": {
+    "URL": "https://www.lua.org/ftp/lua-5.4.7.tar.gz",
+    "SHA256": "9fbf5e28ef86c69858f6d3d34eccc32e911c1a28b4120ff3e84aaa70cfbf1e30"
+  },
+  "vulkan_headers": {
+    "URL": "https://codeload.github.com/KhronosGroup/Vulkan-Headers/tar.gz/refs/tags/v1.4.352",
+    "SHA256": "4850909d22a8a9767c27daea2b972e49d7c298560573d5b6221ee50db9bf49db"
+  }
+}

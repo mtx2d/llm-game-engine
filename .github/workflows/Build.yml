@@ -1,0 +1,61 @@
+name: Build and test
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  core:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Configure CPU systems
+        run: cmake -S . -B build/ci -DASTER_BUILD_RENDERER=OFF -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build/ci --config Debug --parallel 3
+      - name: Test
+        run: ctest --test-dir build/ci -C Debug --output-on-failure
+      - name: Preserve native CPU test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cpu-tests-${{ matrix.os }}
+          path: build/ci/Testing/Temporary/*.log
+  linux-vulkan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install Vulkan and window dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers glslang-tools libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev xvfb xdotool
+      - name: Configure
+        run: cmake --preset debug
+      - name: Build
+        run: cmake --build --preset debug --parallel 3
+      - name: Test CPU and headless Vulkan
+        run: ctest --preset debug
+      - name: Test GLFW swapchain
+        run: xvfb-run -a env ASTER_TEST_WINDOW=1 build/debug/AsterRendererTests
+      - name: Preserve Vulkan and editor evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: linux-vulkan-editor
+          path: |
+            build/debug/Testing/Temporary/*.log
+            build/debug/gui-evidence/*
+            build/debug/runtime-input-evidence/*
+  sanitizers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - run: cmake --preset sanitize
+      - run: cmake --build --preset sanitize --parallel 3
+      - run: ctest --preset sanitize
+      - name: Preserve sanitizer evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sanitizer-tests
+          path: build/sanitize/Testing/Temporary/*.log

@@ -1,0 +1,46 @@
+{
+  "Entities": [
+    {
+      "ID": 1,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.5,
+          0.800000011920929,
+          1.0,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Block",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          0.8999999761581421,
+          0.8999999761581421,
+          0.8999999761581421
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    }
+  ],
+  "Environment": {
+    "Intensity": 1.0,
+    "Path": "",
+    "Rotation": 0.0
+  },
+  "Name": "BlockStack Block",
+  "NextEntityID": 2,
+  "Version": 1
+}

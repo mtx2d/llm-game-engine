@@ -1,0 +1,509 @@
+{
+  "Version": 1,
+  "Name": "Aster Feature Gallery",
+  "Environment": {
+    "Path": "Environment/StudioSmall09.hdr",
+    "Intensity": 1.0,
+    "Rotation": 0.0
+  },
+  "Entities": [
+    {
+      "ID": 1,
+      "Name": "Gallery",
+      "Parent": null,
+      "Transform": {
+        "Translation": [
+          -2,
+          1,
+          0
+        ],
+        "Rotation": [
+          0,
+          0,
+          0
+        ],
+        "Scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "Script": {
+        "Path": "Scripts/FeatureGallery.lua",
+        "Enabled": true
+      },
+      "MeshRenderer": {
+        "Mesh": "Models/Torus.gltf",
+        "BaseColor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "Metallic": 1,
+        "Roughness": 1,
+        "Visible": true
+      }
+    },
+    {
+      "ID": 2,
+      "Name": "Ground",
+      "Parent": null,
+      "Transform": {
+        "Translation": [
+          0,
+          -0.5,
+          0
+        ],
+        "Rotation": [
+          0,
+          0,
+          0
+        ],
+        "Scale": [
+          20,
+          1,
+          20
+        ]
+      },
+      "RigidBody": {
+        "Type": "Static",
+        "Shape": "Box",
+        "HalfExtents": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "LinearVelocity": [
+          0,
+          0,
+          0
+        ],
+        "Radius": 0.5,
+        "Height": 1,
+        "Mass": 1,
+        "Friction": 0.5,
+        "Restitution": 0.1,
+        "IsTrigger": false
+      },
+      "MeshRenderer": {
+        "Mesh": "Models/Floor.gltf",
+        "BaseColor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "Metallic": 1,
+        "Roughness": 1,
+        "Visible": true
+      }
+    },
+    {
+      "ID": 3,
+      "Name": "FallingSphere",
+      "Parent": null,
+      "Transform": {
+        "Translation": [
+          0,
+          3,
+          0
+        ],
+        "Rotation": [
+          0,
+          0,
+          0
+        ],
+        "Scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "RigidBody": {
+        "Type": "Dynamic",
+        "Shape": "Sphere",
+        "HalfExtents": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "LinearVelocity": [
+          0,
+          0,
+          0
+        ],
+        "Radius": 0.5,
+        "Height": 1,
+        "Mass": 1,
+        "Friction": 0.5,
+        "Restitution": 0.1,
+        "IsTrigger": false
+      },
+      "MeshRenderer": {
+        "Mesh": "Models/Sphere.gltf",
+        "BaseColor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "Metallic": 1,
+        "Roughness": 1,
+        "Visible": true
+      }
+    },
+    {
+      "ID": 4,
+      "Name": "Camera",
+      "Parent": null,
+      "Transform": {
+        "Translation": [
+          0,
+          4,
+          10
+        ],
+        "Rotation": [
+          -0.38,
+          0,
+          0
+        ],
+        "Scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "Camera": {
+        "VerticalFov": 60,
+        "NearClip": 0.1,
+        "FarClip": 1000,
+        "Primary": true
+      }
+    },
+    {
+      "ID": 5,
+      "Name": "Sun",
+      "Parent": null,
+      "Transform": {
+        "Translation": [
+          0,
+          5,
+          0
+        ],
+        "Rotation": [
+          -0.85,
+          -0.6,
+          0
+        ],
+        "Scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "Light": {
+        "Type": "Directional",
+        "Color": [
+          1,
+          0.95,
+          0.85
+        ],
+        "Intensity": 3,
+        "Range": 10,
+        "InnerCone": 20,
+        "OuterCone": 30,
+        "CastShadows": true
+      }
+    },
+    {
+      "ID": 6,
+      "Name": "Audio",
+      "Parent": null,
+      "Transform": {
+        "Translation": [
+          0,
+          1,
+          0
+        ],
+        "Rotation": [
+          0,
+          0,
+          0
+        ],
+        "Scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "AudioSource": {
+        "Path": "Audio/Feature.wav",
+        "Volume": 0.25,
+        "Pitch": 1,
+        "Loop": true,
+        "PlayOnStart": false,
+        "Spatial": true
+      }
+    },
+    {
+      "ID": 7,
+      "Name": "DisplayCube",
+      "Parent": null,
+      "Transform": {
+        "Translation": [
+          2,
+          0.65,
+          0
+        ],
+        "Rotation": [
+          0.1,
+          0.4,
+          0
+        ],
+        "Scale": [
+          1.3,
+          1.3,
+          1.3
+        ]
+      },
+      "MeshRenderer": {
+        "Mesh": "Models/Cube.gltf",
+        "BaseColor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "Metallic": 1,
+        "Roughness": 1,
+        "Visible": true
+      }
+    },
+    {
+      "ID": 8,
+      "Name": "KinematicPlatform",
+      "Parent": null,
+      "Transform": {
+        "Translation": [
+          -4,
+          0.4,
+          0
+        ],
+        "Rotation": [
+          0,
+          0,
+          0
+        ],
+        "Scale": [
+          2,
+          0.4,
+          2
+        ]
+      },
+      "RigidBody": {
+        "Type": "Kinematic",
+        "Shape": "Box",
+        "HalfExtents": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "LinearVelocity": [
+          0,
+          0,
+          0
+        ],
+        "Radius": 0.6,
+        "Height": 1,
+        "Mass": 1,
+        "Friction": 0.5,
+        "Restitution": 0.1,
+        "IsTrigger": false
+      },
+      "MeshRenderer": {
+        "Mesh": "Models/Cube.gltf",
+        "BaseColor": [
+          0.3,
+          0.65,
+          0.7,
+          1
+        ],
+        "Metallic": 0.25,
+        "Roughness": 0.75,
+        "Visible": true
+      }
+    },
+    {
+      "ID": 9,
+      "Name": "TriggerZone",
+      "Parent": null,
+      "Transform": {
+        "Translation": [
+          4,
+          1,
+          0
+        ],
+        "Rotation": [
+          0,
+          0,
+          0
+        ],
+        "Scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "RigidBody": {
+        "Type": "Static",
+        "Shape": "Capsule",
+        "HalfExtents": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "LinearVelocity": [
+          0,
+          0,
+          0
+        ],
+        "Radius": 0.6,
+        "Height": 1,
+        "Mass": 1,
+        "Friction": 0.5,
+        "Restitution": 0.1,
+        "IsTrigger": true
+      },
+      "Script": {
+        "Path": "Scripts/FeatureTrigger.lua",
+        "Enabled": true
+      }
+    },
+    {
+      "ID": 10,
+      "Name": "TriggerBox",
+      "Parent": null,
+      "Transform": {
+        "Translation": [
+          4,
+          3,
+          0
+        ],
+        "Rotation": [
+          0,
+          0,
+          0
+        ],
+        "Scale": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "RigidBody": {
+        "Type": "Dynamic",
+        "Shape": "Box",
+        "HalfExtents": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "LinearVelocity": [
+          0,
+          0,
+          0
+        ],
+        "Radius": 0.6,
+        "Height": 1,
+        "Mass": 1,
+        "Friction": 0.5,
+        "Restitution": 0.1,
+        "IsTrigger": false
+      },
+      "MeshRenderer": {
+        "Mesh": "Models/Cube.gltf",
+        "BaseColor": [
+          0.7,
+          0.4,
+          0.2,
+          1
+        ],
+        "Metallic": 0.25,
+        "Roughness": 0.75,
+        "Visible": true
+      }
+    },
+    {
+      "ID": 11,
+      "Name": "PointLight",
+      "Parent": null,
+      "Transform": {
+        "Translation": [
+          2,
+          2,
+          3
+        ],
+        "Rotation": [
+          0,
+          0,
+          0
+        ],
+        "Scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "Light": {
+        "Type": "Point",
+        "Color": [
+          0.2,
+          0.5,
+          1
+        ],
+        "Intensity": 5,
+        "Range": 8,
+        "InnerCone": 20,
+        "OuterCone": 30,
+        "CastShadows": false
+      }
+    },
+    {
+      "ID": 12,
+      "Name": "SpotLight",
+      "Parent": null,
+      "Transform": {
+        "Translation": [
+          -3,
+          4,
+          3
+        ],
+        "Rotation": [
+          -0.6,
+          0,
+          0
+        ],
+        "Scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "Light": {
+        "Type": "Spot",
+        "Color": [
+          1,
+          0.4,
+          0.12
+        ],
+        "Intensity": 10,
+        "Range": 8,
+        "InnerCone": 15,
+        "OuterCone": 25,
+        "CastShadows": false
+      }
+    }
+  ],
+  "NextEntityID": 13
+}

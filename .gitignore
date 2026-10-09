@@ -1,0 +1,10 @@
+/build/
+/.tools/
+/.cache/
+/out/
+*.user
+*.swp
+.DS_Store
+__pycache__/
+*.pyc
+imgui.ini

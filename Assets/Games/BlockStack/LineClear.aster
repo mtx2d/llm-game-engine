@@ -1,0 +1,1575 @@
+{
+  "Entities": [
+    {
+      "ID": 1,
+      "Name": "BlockStack",
+      "Parent": null,
+      "Script": {
+        "Enabled": true,
+        "Path": "Games/BlockStack/BlockStack.lua"
+      },
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "Camera": {
+        "FarClip": 100.0,
+        "NearClip": 0.10000000149011612,
+        "Primary": true,
+        "VerticalFov": 45.0
+      },
+      "ID": 2,
+      "Name": "Game camera",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "Translation": [
+          2.299999952316284,
+          -0.30000001192092896,
+          33.0
+        ]
+      }
+    },
+    {
+      "ID": 3,
+      "Light": {
+        "CastShadows": true,
+        "Color": [
+          1.0,
+          0.9700000286102295,
+          0.9100000262260437
+        ],
+        "InnerCone": 20.0,
+        "Intensity": 4.0,
+        "OuterCone": 30.0,
+        "Range": 30.0,
+        "Type": "Directional"
+      },
+      "Name": "Sun",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          -0.5,
+          -0.4000000059604645,
+          0.0
+        ],
+        "Scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "Translation": [
+          0.0,
+          10.0,
+          10.0
+        ]
+      }
+    },
+    {
+      "ID": 4,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.02500000037252903,
+          0.05000000074505806,
+          0.07500000298023224,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Board",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.399999618530273,
+          20.399999618530273,
+          0.30000001192092896
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          -0.75
+        ]
+      }
+    },
+    {
+      "ID": 5,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.12999999523162842,
+          0.3499999940395355,
+          0.550000011920929,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Board edge",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          0.20000000298023224,
+          20.799999237060547,
+          0.5
+        ],
+        "Translation": [
+          -5.349999904632568,
+          0.0,
+          -0.20000000298023224
+        ]
+      }
+    },
+    {
+      "ID": 6,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.12999999523162842,
+          0.3499999940395355,
+          0.550000011920929,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Board edge",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          0.20000000298023224,
+          20.799999237060547,
+          0.5
+        ],
+        "Translation": [
+          5.349999904632568,
+          0.0,
+          -0.20000000298023224
+        ]
+      }
+    },
+    {
+      "ID": 7,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.12999999523162842,
+          0.3499999940395355,
+          0.550000011920929,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Board edge",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.899999618530273,
+          0.20000000298023224,
+          0.5
+        ],
+        "Translation": [
+          0.0,
+          -10.350000381469727,
+          -0.20000000298023224
+        ]
+      }
+    },
+    {
+      "ID": 8,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.12999999523162842,
+          0.3499999940395355,
+          0.550000011920929,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Board edge",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.899999618530273,
+          0.20000000298023224,
+          0.5
+        ],
+        "Translation": [
+          0.0,
+          10.350000381469727,
+          -0.20000000298023224
+        ]
+      }
+    },
+    {
+      "ID": 9,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          0.017999999225139618,
+          20.0,
+          0.019999999552965164
+        ],
+        "Translation": [
+          -4.0,
+          0.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 10,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          0.017999999225139618,
+          20.0,
+          0.019999999552965164
+        ],
+        "Translation": [
+          -3.0,
+          0.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 11,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          0.017999999225139618,
+          20.0,
+          0.019999999552965164
+        ],
+        "Translation": [
+          -2.0,
+          0.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 12,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          0.017999999225139618,
+          20.0,
+          0.019999999552965164
+        ],
+        "Translation": [
+          -1.0,
+          0.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 13,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          0.017999999225139618,
+          20.0,
+          0.019999999552965164
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 14,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          0.017999999225139618,
+          20.0,
+          0.019999999552965164
+        ],
+        "Translation": [
+          1.0,
+          0.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 15,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          0.017999999225139618,
+          20.0,
+          0.019999999552965164
+        ],
+        "Translation": [
+          2.0,
+          0.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 16,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          0.017999999225139618,
+          20.0,
+          0.019999999552965164
+        ],
+        "Translation": [
+          3.0,
+          0.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 17,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          0.017999999225139618,
+          20.0,
+          0.019999999552965164
+        ],
+        "Translation": [
+          4.0,
+          0.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 18,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.0,
+          0.017999999225139618,
+          0.019999999552965164
+        ],
+        "Translation": [
+          0.0,
+          -9.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 19,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.0,
+          0.017999999225139618,
+          0.019999999552965164
+        ],
+        "Translation": [
+          0.0,
+          -8.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 20,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.0,
+          0.017999999225139618,
+          0.019999999552965164
+        ],
+        "Translation": [
+          0.0,
+          -7.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 21,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.0,
+          0.017999999225139618,
+          0.019999999552965164
+        ],
+        "Translation": [
+          0.0,
+          -6.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 22,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.0,
+          0.017999999225139618,
+          0.019999999552965164
+        ],
+        "Translation": [
+          0.0,
+          -5.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 23,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.0,
+          0.017999999225139618,
+          0.019999999552965164
+        ],
+        "Translation": [
+          0.0,
+          -4.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 24,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.0,
+          0.017999999225139618,
+          0.019999999552965164
+        ],
+        "Translation": [
+          0.0,
+          -3.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 25,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.0,
+          0.017999999225139618,
+          0.019999999552965164
+        ],
+        "Translation": [
+          0.0,
+          -2.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 26,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.0,
+          0.017999999225139618,
+          0.019999999552965164
+        ],
+        "Translation": [
+          0.0,
+          -1.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 27,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.0,
+          0.017999999225139618,
+          0.019999999552965164
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 28,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.0,
+          0.017999999225139618,
+          0.019999999552965164
+        ],
+        "Translation": [
+          0.0,
+          1.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 29,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.0,
+          0.017999999225139618,
+          0.019999999552965164
+        ],
+        "Translation": [
+          0.0,
+          2.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 30,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.0,
+          0.017999999225139618,
+          0.019999999552965164
+        ],
+        "Translation": [
+          0.0,
+          3.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 31,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.0,
+          0.017999999225139618,
+          0.019999999552965164
+        ],
+        "Translation": [
+          0.0,
+          4.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 32,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.0,
+          0.017999999225139618,
+          0.019999999552965164
+        ],
+        "Translation": [
+          0.0,
+          5.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 33,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.0,
+          0.017999999225139618,
+          0.019999999552965164
+        ],
+        "Translation": [
+          0.0,
+          6.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 34,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.0,
+          0.017999999225139618,
+          0.019999999552965164
+        ],
+        "Translation": [
+          0.0,
+          7.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 35,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.0,
+          0.017999999225139618,
+          0.019999999552965164
+        ],
+        "Translation": [
+          0.0,
+          8.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 36,
+      "MeshRenderer": {
+        "BaseColor": [
+          0.11999999731779099,
+          0.20000000298023224,
+          0.25,
+          1.0
+        ],
+        "Mesh": "Models/Cube.gltf",
+        "Metallic": 0.05000000074505806,
+        "Roughness": 0.6499999761581421,
+        "Visible": true
+      },
+      "Name": "Grid",
+      "Parent": null,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          10.0,
+          0.017999999225139618,
+          0.019999999552965164
+        ],
+        "Translation": [
+          0.0,
+          9.0,
+          -0.5299999713897705
+        ]
+      }
+    },
+    {
+      "ID": 37,
+      "Name": "Seed:0:0",
+      "Parent": 1,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "ID": 38,
+      "Name": "Seed:1:0",
+      "Parent": 1,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "ID": 39,
+      "Name": "Seed:2:0",
+      "Parent": 1,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "ID": 40,
+      "Name": "Seed:3:0",
+      "Parent": 1,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "ID": 41,
+      "Name": "Seed:6:0",
+      "Parent": 1,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "ID": 42,
+      "Name": "Seed:7:0",
+      "Parent": 1,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "ID": 43,
+      "Name": "Seed:8:0",
+      "Parent": 1,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "ID": 44,
+      "Name": "Seed:9:0",
+      "Parent": 1,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "ID": 45,
+      "Name": "Seed:0:1",
+      "Parent": 1,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "ID": 46,
+      "Name": "Seed:1:1",
+      "Parent": 1,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "ID": 47,
+      "Name": "Seed:2:1",
+      "Parent": 1,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "ID": 48,
+      "Name": "Seed:3:1",
+      "Parent": 1,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "ID": 49,
+      "Name": "Seed:6:1",
+      "Parent": 1,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "ID": 50,
+      "Name": "Seed:7:1",
+      "Parent": 1,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "ID": 51,
+      "Name": "Seed:8:1",
+      "Parent": 1,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "ID": 52,
+      "Name": "Seed:9:1",
+      "Parent": 1,
+      "Transform": {
+        "Rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "Scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "Translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    }
+  ],
+  "Environment": {
+    "Intensity": 0.3499999940395355,
+    "Path": "Environment/StudioSmall09.hdr",
+    "Rotation": 1.7000000476837158
+  },
+  "Name": "BlockStack Line Clear",
+  "NextEntityID": 53,
+  "Version": 1
+}

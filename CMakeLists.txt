@@ -1,0 +1,166 @@
+cmake_minimum_required(VERSION 3.24)
+project(Aster VERSION 0.1.0 LANGUAGES C CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+option(ASTER_BUILD_RENDERER "Build the GLFW/NVRHI Vulkan renderer" ON)
+option(ASTER_BUILD_GUI "Build the graphical editor frontend" ON)
+option(ASTER_BUILD_TESTS "Build Aster automated tests" ON)
+option(ASTER_SANITIZE "Enable address and undefined behavior sanitizers" OFF)
+option(ASTER_WARNINGS_AS_ERRORS "Treat Aster warnings as errors" ON)
+
+if(ASTER_SANITIZE)
+  if(MSVC)
+    message(FATAL_ERROR "Use Clang or GCC for the sanitizer preset")
+  endif()
+  add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=address,undefined)
+endif()
+
+include(cmake/Dependencies.cmake)
+include(cmake/AssetDependencies.cmake)
+
+function(aster_target target)
+  target_compile_features(${target} PUBLIC cxx_std_20)
+  if(WIN32)
+    target_compile_definitions(${target} PRIVATE NOMINMAX)
+  endif()
+  if(MSVC)
+    target_compile_options(${target} PRIVATE /W4 /permissive-)
+    if(ASTER_WARNINGS_AS_ERRORS)
+      target_compile_options(${target} PRIVATE /WX)
+    endif()
+  else()
+    target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+    if(ASTER_WARNINGS_AS_ERRORS)
+      target_compile_options(${target} PRIVATE -Werror)
+    endif()
+  endif()
+endfunction()
+
+add_library(Aster STATIC
+  Engine/src/Core/ExecutablePath.cpp
+  Engine/src/Input/InputState.cpp
+  Engine/src/Renderer/Environment.cpp
+  Engine/src/Assets/AssetImporter.cpp
+  Engine/src/Assets/AssetIO.cpp
+  Engine/src/Scene/Scene.cpp
+  Engine/src/Scene/SceneSerializer.cpp
+  Engine/src/Simulation/Simulation.cpp
+)
+target_include_directories(Aster PUBLIC Engine/include)
+target_include_directories(Aster SYSTEM PRIVATE "${bullet_SOURCE_DIR}/src" "${miniaudio_SOURCE_DIR}")
+target_link_libraries(Aster PUBLIC glm::glm nlohmann_json::nlohmann_json PRIVATE AsterAssetThirdParty AsterLua BulletDynamics BulletCollision LinearMath ${CMAKE_DL_LIBS} Threads::Threads)
+target_compile_definitions(Aster PUBLIC GLM_FORCE_RADIANS GLM_FORCE_DEPTH_ZERO_TO_ONE)
+target_compile_definitions(Aster PRIVATE GLM_ENABLE_EXPERIMENTAL)
+aster_target(Aster)
+
+add_library(AsterEditorCommands STATIC Editor/src/CommandProcessor.cpp Editor/src/ProjectExporter.cpp)
+target_include_directories(AsterEditorCommands PUBLIC Editor/include)
+target_link_libraries(AsterEditorCommands PUBLIC Aster)
+aster_target(AsterEditorCommands)
+add_executable(AsterEditor Editor/src/Main.cpp)
+target_link_libraries(AsterEditor PRIVATE AsterEditorCommands)
+aster_target(AsterEditor)
+add_executable(AsterRuntime Runtime/src/Main.cpp)
+target_link_libraries(AsterRuntime PRIVATE Aster)
+aster_target(AsterRuntime)
+
+if(ASTER_BUILD_RENDERER)
+  include(cmake/Shaders.cmake)
+  add_library(AsterRenderer STATIC Engine/src/Renderer/Renderer.cpp Engine/src/Renderer/SceneRenderPass.cpp)
+  target_include_directories(AsterRenderer PUBLIC Engine/include)
+  target_link_libraries(AsterRenderer PRIVATE Vulkan::Headers nvrhi_vk nvrhi glfw Vulkan::Vulkan)
+  target_link_libraries(AsterRenderer PUBLIC Aster)
+  aster_shader(AsterRenderer Shaders/Pbr.vert PbrVert)
+  aster_shader(AsterRenderer Shaders/Pbr.frag PbrFrag)
+  aster_shader(AsterRenderer Shaders/Fullscreen.vert FullscreenVert)
+  aster_shader(AsterRenderer Shaders/Tonemap.frag TonemapFrag)
+  aster_shader(AsterRenderer Shaders/Sky.frag SkyFrag)
+  aster_shader(AsterRenderer Shaders/Shadow.vert ShadowVert)
+  aster_shader(AsterRenderer Shaders/Depth.frag DepthFrag)
+  aster_shader(AsterRenderer Shaders/Depth.vert DepthVert)
+  aster_shader(AsterRenderer Shaders/Ssao.frag SsaoFrag)
+  aster_shader(AsterRenderer Shaders/SsaoBlur.frag SsaoBlurFrag)
+  aster_target(AsterRenderer)
+  if(ASTER_BUILD_GUI)
+    include(cmake/EditorDependencies.cmake)
+    add_library(AsterEditorGui STATIC Editor/src/GuiRenderer.cpp Editor/src/GuiLayer.cpp)
+    target_include_directories(AsterEditorGui PUBLIC Editor/include)
+    target_link_libraries(AsterEditorGui PUBLIC AsterEditorCommands AsterRenderer PRIVATE AsterImGui nvrhi glfw)
+    aster_shader(AsterEditorGui Editor/Shaders/Gui.vert GuiVert)
+    aster_shader(AsterEditorGui Editor/Shaders/Gui.frag GuiFrag)
+    aster_target(AsterEditorGui)
+    target_compile_definitions(AsterEditorGui PRIVATE GLM_ENABLE_EXPERIMENTAL)
+    target_link_libraries(AsterEditor PRIVATE AsterEditorGui)
+    target_compile_definitions(AsterEditor PRIVATE ASTER_HAS_RENDERER)
+  endif()
+  target_link_libraries(AsterRuntime PRIVATE AsterRenderer)
+  target_compile_definitions(AsterRuntime PRIVATE ASTER_HAS_RENDERER)
+endif()
+
+if(ASTER_BUILD_TESTS)
+  enable_testing()
+  add_executable(AsterTests Tests/TestMain.cpp Tests/SceneTests.cpp Tests/SimulationTests.cpp Tests/CommandTests.cpp Tests/AssetTests.cpp Tests/EnvironmentTests.cpp Tests/ViewportTests.cpp)
+  target_link_libraries(AsterTests PRIVATE Aster AsterEditorCommands)
+  target_compile_definitions(AsterTests PRIVATE ASTER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+  aster_target(AsterTests)
+  add_test(NAME Scene COMMAND AsterTests scene)
+  add_test(NAME Simulation COMMAND AsterTests simulation)
+  add_test(NAME Commands COMMAND AsterTests commands)
+  add_test(NAME Assets COMMAND AsterTests assets)
+  add_test(NAME Environment COMMAND AsterTests environment)
+  add_test(NAME Viewport COMMAND AsterTests viewport)
+  set_tests_properties(Scene Simulation Commands Assets Environment Viewport PROPERTIES TIMEOUT 90)
+  add_test(NAME FeatureGallery COMMAND AsterRuntime
+    --scene "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Scenes/FeatureGallery.aster"
+    --project "${CMAKE_CURRENT_SOURCE_DIR}/Assets" --steps 120)
+  set_tests_properties(FeatureGallery PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "all 32 engine bindings exercised")
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(NAME Protocol COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/ProtocolTests.py"
+    "$<TARGET_FILE:AsterEditor>" "$<TARGET_FILE:AsterRuntime>")
+  set_tests_properties(Protocol PROPERTIES TIMEOUT 90)
+  add_test(NAME Export COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/ExportTests.py"
+    --editor "$<TARGET_FILE:AsterEditor>" --runtime "$<TARGET_FILE:AsterRuntime>"
+    --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets" --notices "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty")
+  set_tests_properties(Export PROPERTIES TIMEOUT 180)
+  add_test(NAME BlockStack COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/BlockStackTests.py"
+    --editor "$<TARGET_FILE:AsterEditor>" --runtime "$<TARGET_FILE:AsterRuntime>"
+    --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets" --notices "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty")
+  set_tests_properties(BlockStack PROPERTIES TIMEOUT 180)
+  if(ASTER_BUILD_RENDERER)
+    add_executable(AsterRendererTests Tests/RendererTestMain.cpp Tests/RendererTests.cpp)
+    target_link_libraries(AsterRendererTests PRIVATE AsterRenderer glfw)
+    target_compile_definitions(AsterRendererTests PRIVATE ASTER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    aster_target(AsterRendererTests)
+    add_test(NAME Renderer COMMAND AsterRendererTests)
+    set_tests_properties(Renderer PROPERTIES TIMEOUT 60 LABELS "gpu")
+    if(ASTER_BUILD_GUI AND UNIX AND NOT APPLE)
+      find_program(ASTER_XVFB_RUN xvfb-run)
+      find_program(ASTER_XDOTOOL xdotool)
+      if(ASTER_XVFB_RUN AND ASTER_XDOTOOL)
+        add_test(NAME EditorGui COMMAND "${ASTER_XVFB_RUN}" -a -s "-screen 0 1600x1000x24"
+          "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/GuiTests.py"
+          --editor "$<TARGET_FILE:AsterEditor>" --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets"
+          --artifacts "${CMAKE_CURRENT_BINARY_DIR}/gui-evidence")
+        set_tests_properties(EditorGui PROPERTIES TIMEOUT 120 LABELS "gpu;gui")
+        add_test(NAME GraphicalExport COMMAND "${ASTER_XVFB_RUN}" -a
+          "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/ExportTests.py"
+          --editor "$<TARGET_FILE:AsterEditor>" --runtime "$<TARGET_FILE:AsterRuntime>"
+          --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets" --notices "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty"
+          --graphical)
+        set_tests_properties(GraphicalExport PROPERTIES TIMEOUT 180 LABELS "gpu;export")
+        add_test(NAME RuntimeInput COMMAND "${ASTER_XVFB_RUN}" -a -s "-screen 0 1440x900x24"
+          "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/RuntimeInputTests.py"
+          --editor "$<TARGET_FILE:AsterEditor>" --runtime "$<TARGET_FILE:AsterRuntime>"
+          --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets" --notices "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty"
+          --artifacts "${CMAKE_CURRENT_BINARY_DIR}/runtime-input-evidence")
+        set_tests_properties(RuntimeInput PROPERTIES TIMEOUT 120 LABELS "gpu;export;input")
+      else()
+        message(STATUS "Native GUI interaction test requires xvfb-run and xdotool")
+      endif()
+    endif()
+  endif()
+endif()
