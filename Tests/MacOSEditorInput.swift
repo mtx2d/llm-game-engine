@@ -57,7 +57,24 @@ final class EditorInput
 			"Existing held controls prevent isolated native editor input")
 	}
 
-	func Mouse(_ action: String, x: Double, y: Double) async throws
+	func CursorPosition() throws -> CGPoint
+	{
+		guard let event = CGEvent(source: nil) else
+		{
+			throw TestFailure(description: "Cannot read the native cursor position")
+		}
+		return event.location
+	}
+
+	func RequireCursor(at point: CGPoint) throws -> CGPoint
+	{
+		let actual = try CursorPosition()
+		try Require(abs(actual.x - point.x) <= 1 && abs(actual.y - point.y) <= 1,
+			"Native cursor did not remain at its owned-client target: expected \(point), observed \(actual)")
+		return actual
+	}
+
+	func Mouse(_ action: String, x: Double, y: Double) async throws -> [String: Double]
 	{
 		try GuardInput()
 		try Require(x.isFinite && y.isFinite && x >= 0 && y >= 0 && x < Double(client.width) && y < Double(client.height),
@@ -77,6 +94,15 @@ final class EditorInput
 			type = .leftMouseUp
 		default: throw TestFailure(description: "Unknown native mouse operation")
 		}
+		// PID-directed events do not establish the physical pointer position.
+		// ImGui's GLFW fallback polls Cocoa mouseLocationOutsideOfEventStream,
+		// so keep that position consistent with the event's owned-client point.
+		// This warp generates no events; the mouse event below still targets PID.
+		let before = try CursorPosition()
+		let warp = CGWarpMouseCursorPosition(pointer)
+		try Require(warp == .success, "Cannot move the native cursor to its owned-client target: \(warp.rawValue)")
+		_ = try RequireCursor(at: pointer)
+		try game.CheckFocused()
 		guard let event = CGEvent(mouseEventSource: source, mouseType: type,
 			mouseCursorPosition: pointer, mouseButton: .left) else
 		{
@@ -89,6 +115,10 @@ final class EditorInput
 		if action == "down" { leftDown = true }
 		if action == "up" { leftDown = false }
 		try await Settle()
+		let after = try RequireCursor(at: pointer)
+		return ["before_x": Double(before.x), "before_y": Double(before.y),
+			"target_x": Double(pointer.x), "target_y": Double(pointer.y),
+			"after_x": Double(after.x), "after_y": Double(after.y)]
 	}
 
 	func Key(_ key: String, down: Bool) async throws
@@ -230,12 +260,13 @@ struct NativeEditorInput
 				{
 					throw TestFailure(description: "Invalid native editor request")
 				}
+				var response: [String: Any] = ["ok": true]
 				switch operation
 				{
 				case "mouse":
 					guard let action = request["action"] as? String, let x = request["x"] as? Double,
 						let y = request["y"] as? Double else { throw TestFailure(description: "Invalid pointer request") }
-					try await driver.Mouse(action, x: x, y: y)
+					response["cursor"] = try await driver.Mouse(action, x: x, y: y)
 				case "key":
 					guard let key = request["key"] as? String, let down = request["down"] as? Bool else
 					{
@@ -255,7 +286,8 @@ struct NativeEditorInput
 					return
 				default: throw TestFailure(description: "Unknown native editor operation")
 				}
-				try WriteJSON(["ok": true, "events_posted": driver.eventsPosted] as [String: Any])
+				response["events_posted"] = driver.eventsPosted
+				try WriteJSON(response)
 			}
 			throw TestFailure(description: "Native editor driver reached EOF before graceful close")
 		}
