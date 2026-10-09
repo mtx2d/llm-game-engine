@@ -28,13 +28,26 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install Vulkan and window dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers glslang-tools libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxdamage1 xvfb xdotool
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers glslang-tools libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxdamage1 xvfb xdotool openbox x11-utils
       - name: Fetch verified upstream glTF corpus
         run: python3 scripts/FetchAssetCorpus.py
       - name: Configure
         run: cmake --preset debug -DASTER_ASSET_CORPUS="$PWD/build/asset-corpus"
       - name: Build
         run: cmake --build --preset debug --parallel 3
+      - name: Check native audio device capability and clock
+        shell: python
+        timeout-minutes: 2
+        run: |
+          import json, subprocess, sys
+          from pathlib import Path
+          artifacts = Path("build/debug/device-audio-evidence")
+          command = [sys.executable, "Tests/DeviceAudioTests.py", "--editor", "build/debug/AsterEditor"]
+          subprocess.run(command + ["--artifacts", str(artifacts / "probe"), "--probe"], check=True, timeout=45)
+          probe = json.loads((artifacts / "probe/DeviceAudio.json").read_text())
+          assert probe["status"] in ("available", "unavailable") and probe["passed"] is False
+          if probe["status"] == "available":
+              subprocess.run(command + ["--artifacts", str(artifacts / "playback")], check=True, timeout=45)
       - name: Test CPU, headless Vulkan and GLFW presentation
         run: ctest --preset debug
       - name: Preserve Vulkan and editor evidence
@@ -48,6 +61,8 @@ jobs:
             build/debug/editor-render-evidence/*
             build/debug/runtime-input-evidence/*
             build/debug/asset-corpus-evidence/*
+            build/debug/renderer-evidence/*
+            build/debug/device-audio-evidence/**
   macos-vulkan:
     runs-on: macos-15
     timeout-minutes: 60
@@ -87,8 +102,22 @@ jobs:
         run: |
           source build/macos-vulkan/Environment.sh
           python3 scripts/FetchAssetCorpus.py
-          cmake -S . -B build/macos -G Ninja -DCMAKE_BUILD_TYPE=Debug -DASTER_ASSET_CORPUS="$PWD/build/asset-corpus"
+          cmake -S . -B build/macos -G Ninja -DCMAKE_BUILD_TYPE=Release -DASTER_ASSET_CORPUS="$PWD/build/asset-corpus"
           cmake --build build/macos --parallel 3
+      - name: Check native audio device capability and clock
+        shell: python
+        timeout-minutes: 2
+        run: |
+          import json, os, subprocess, sys
+          from pathlib import Path
+          os.environ["DYLD_LIBRARY_PATH"] = str(Path("build/macos-vulkan/install/lib").resolve())
+          artifacts = Path("build/macos/device-audio-evidence")
+          command = [sys.executable, "Tests/DeviceAudioTests.py", "--editor", "build/macos/AsterEditor"]
+          subprocess.run(command + ["--artifacts", str(artifacts / "probe"), "--probe"], check=True, timeout=45)
+          probe = json.loads((artifacts / "probe/DeviceAudio.json").read_text())
+          assert probe["status"] in ("available", "unavailable") and probe["passed"] is False
+          if probe["status"] == "available":
+              subprocess.run(command + ["--artifacts", str(artifacts / "playback")], check=True, timeout=45)
       - name: Test native CPU, MoltenVK output and GLFW presentation
         run: |
           source build/macos-vulkan/Environment.sh
@@ -108,8 +137,12 @@ jobs:
             build/macos/Testing/Temporary/*.log
             build/macos/editor-render-evidence/*
             build/macos/asset-corpus-evidence/*
+            build/macos/renderer-evidence/*
+            build/macos/device-audio-evidence/**
             build/macos/runtime-input-evidence/*
+            build/macos/native-editor-evidence/*
             !build/macos/runtime-input-evidence/NativeHelper/**
+            !build/macos/native-editor-evidence/NativeHelper/**
             build/macos-vulkan/build/*/CMakeFiles/CMakeConfigureLog.yaml
   windows-vulkan:
     runs-on: windows-2022
@@ -147,6 +180,19 @@ jobs:
           cmake --build build/windows-native --config Release --parallel 3
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item -LiteralPath $env:ASTER_VULKAN_LOADER -Destination build/windows-native/Release/vulkan-1.dll
+      - name: Check native audio device capability and clock
+        shell: python
+        timeout-minutes: 2
+        run: |
+          import json, subprocess, sys
+          from pathlib import Path
+          artifacts = Path("build/windows-native/device-audio-evidence")
+          command = [sys.executable, "Tests/DeviceAudioTests.py", "--editor", "build/windows-native/Release/AsterEditor.exe"]
+          subprocess.run(command + ["--artifacts", str(artifacts / "probe"), "--probe"], check=True, timeout=45)
+          probe = json.loads((artifacts / "probe/DeviceAudio.json").read_text())
+          assert probe["status"] in ("available", "unavailable") and probe["passed"] is False
+          if probe["status"] == "available":
+              subprocess.run(command + ["--artifacts", str(artifacts / "playback")], check=True, timeout=45)
       - name: Test native CPU, Vulkan output and GLFW presentation
         run: ctest --test-dir build/windows-native -C Release --output-on-failure
       - name: Test relocated graphical Windows export
@@ -164,6 +210,9 @@ jobs:
             build/windows-native/runtime-input-evidence/*
             build/windows-native/editor-render-evidence/*
             build/windows-native/asset-corpus-evidence/*
+            build/windows-native/renderer-evidence/*
+            build/windows-native/device-audio-evidence/**
+            build/windows-native/native-editor-evidence/*
   sanitizers:
     runs-on: ubuntu-24.04
     steps:

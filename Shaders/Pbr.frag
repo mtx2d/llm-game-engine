@@ -101,7 +101,7 @@ float Visibility(float nDotV, float nDotL, float roughness)
 	return 0.5 / max(view + light, 0.000001);
 }
 
-float ShadowVisibility(Light light, vec3 normal, vec3 lightDirection)
+float ShadowVisibility(Light light, vec3 normal, vec3 lightDirection, vec3 positionDx, vec3 positionDy)
 {
 	if (light.Cone.z < 0.0) { return 1.0; }
 	int face = 0;
@@ -128,14 +128,31 @@ float ShadowVisibility(Light light, vec3 normal, vec3 lightDirection)
 	}
 	float bias = frame.Shadow.x * (1.0 + 2.0 * (1.0 - max(dot(normal, lightDirection), 0.0)));
 	if (light.PositionType.w > 0.5) { bias *= max(1.0 - position.z, 0.00001); }
-	vec2 texel = frame.Shadow.y / vec2(textureSize(sampler2DArray(tShadows, sShadow), 0).xy);
+	// A sloped receiver has a different depth at every PCF tap. Transform its
+	// geometric plane through the selected projection, including perspective W,
+	// so nearby receiver texels are not mistaken for occluders.
+	vec4 projectedDx = light.ShadowMatrices[face] * vec4(positionDx, 0.0);
+	vec4 projectedDy = light.ShadowMatrices[face] * vec4(positionDy, 0.0);
+	vec3 depthDx = (projectedDx.xyz - position * projectedDx.w) / projected.w;
+	vec3 depthDy = (projectedDy.xyz - position * projectedDy.w) / projected.w;
+	vec3 receiverPlane = cross(depthDx * vec3(0.5, -0.5, 1.0), depthDy * vec3(0.5, -0.5, 1.0));
+	vec2 depthGradient = vec2(0.0);
+	if (abs(receiverPlane.z) > 0.00001 * length(receiverPlane))
+	{
+		depthGradient = -receiverPlane.xy / receiverPlane.z;
+	}
+	ivec2 dimensions = textureSize(sampler2DArray(tShadows, sShadow), 0).xy;
+	vec2 texel = frame.Shadow.y / vec2(dimensions);
 	float visibility = 0.0;
 	for (int y = -2; y <= 2; ++y)
 	{
 		for (int x = -2; x <= 2; ++x)
 		{
-			float depth = texture(sampler2DArray(tShadows, sShadow), vec3(uv + vec2(x, y) * texel, light.Cone.z + float(face))).r;
-			visibility += position.z - bias <= depth ? 1.0 : 0.0;
+			ivec2 sampleTexel = clamp(ivec2(floor((uv + vec2(x, y) * texel) * vec2(dimensions))), ivec2(0), dimensions - 1);
+			vec2 sampleUv = (vec2(sampleTexel) + 0.5) / vec2(dimensions);
+			float receiverDepth = position.z + dot(depthGradient, sampleUv - uv);
+			float depth = texelFetch(sampler2DArray(tShadows, sShadow), ivec3(sampleTexel, int(light.Cone.z) + face), 0).r;
+			visibility += receiverDepth - bias <= depth ? 1.0 : 0.0;
 		}
 	}
 	return visibility / 25.0;
@@ -143,6 +160,10 @@ float ShadowVisibility(Light light, vec3 normal, vec3 lightDirection)
 
 void main()
 {
+	// Derivatives must be evaluated before material discards and divergent
+	// light/point-face branches; the plane uses geometry, not normal-map detail.
+	vec3 positionDx = dFdx(vPosition);
+	vec3 positionDy = dFdy(vPosition);
 	vec4 baseColor = material.BaseColor * vColor * texture(sampler2D(tBaseColor, sBaseColor), TextureCoordinate(0));
 	if (material.Parameters.z > 0.5 && material.Parameters.z < 1.5 && baseColor.a < material.Parameters.y)
 	{
@@ -224,7 +245,7 @@ void main()
 		vec3 fresnel = Fresnel(vDotH, f0);
 		vec3 specular = Distribution(nDotH, roughness) * Visibility(nDotV, nDotL, roughness) * fresnel;
 		vec3 diffuse = (1.0 - fresnel) * (1.0 - metallic) * baseColor.rgb / Pi;
-		float shadow = nDotL > 0.0 && attenuation > 0.0 ? ShadowVisibility(light, normal, lightDirection) : 1.0;
+		float shadow = nDotL > 0.0 && attenuation > 0.0 ? ShadowVisibility(light, normal, lightDirection, positionDx, positionDy) : 1.0;
 		color += (diffuse + specular) * light.ColorIntensity.rgb * light.ColorIntensity.w * attenuation * nDotL * shadow;
 	}
 	outColor = vec4(clamp(color, 0.0, 65504.0), alpha);

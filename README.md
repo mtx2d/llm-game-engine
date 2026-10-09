@@ -29,6 +29,20 @@ The graphical editor opens the feature scene. Use the hierarchy and inspector to
 
 `Scenes/AudioValidation.aster` cycles a tone through left, center, right, far, and silent stages, two seconds each. Its offline PCM test checks channel balance, attenuation, silence and repeat. To exercise an actual output device, run `build/debug/AsterRuntime --scene Assets/Scenes/AudioValidation.aster --project Assets` without `--steps`, using stereo speakers or headphones. Physical listening results remain unverified. [FeatureCoverage.md](docs/FeatureCoverage.md) maps every component and Lua binding to its scene and behavioral assertions.
 
+An optional device-clock test is available for Linux, macOS and Windows. It checks natural audio EOF, restart and stop/replay through the native callback. It fails if no endpoint is available; `--probe` records initialization availability only, with playback marked unverified. CI probes first and runs the playback checks when an endpoint is available. Neither mode captures PCM or proves physical listening:
+
+```sh
+python3 Tests/DeviceAudioTests.py --editor build/release/AsterEditor \
+  --artifacts build/device-audio-evidence
+```
+
+An optional Linux test captures only Aster's own audio stream through an existing PipeWire server. It requires `pw-record`, `pw-dump`, `pw-link`, and FFmpeg, and leaves host volume and default routing unchanged. It records endpoint metadata and checks the captured spatial sequence; a virtual endpoint proves software transport only, and no capture proves physical listening. This host-dependent test is outside default CTest:
+
+```sh
+python3 Tests/PipeWireAudioTests.py --editor build/release/AsterEditor \
+  --assets Assets --artifacts build/pipewire-audio-evidence
+```
+
 The editor also accepts JSON lines as documented in [Automation.md](docs/Automation.md). The runtime opens a game window by default; `--steps` selects deterministic headless execution. [Export.md](docs/Export.md) describes packaging and runtime arguments. Renderer tests use a real Vulkan device and validate pixel readback. Native GUI interaction checks require a display, X11, and `xdotool`:
 
 ```sh

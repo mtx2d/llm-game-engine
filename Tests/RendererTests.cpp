@@ -21,7 +21,7 @@
 
 namespace
 {
-	void RunSceneRenderingTests(Aster::RendererOptions options);
+	void RunSceneRenderingTests(Aster::RendererOptions options, const std::filesystem::path& evidence);
 	void Require(bool condition, const char* message)
 	{
 		if (!condition)
@@ -98,7 +98,13 @@ namespace
 
 	void TestNativeWindowLifecycle(Aster::Renderer& renderer)
 	{
-#if defined(_WIN32) || defined(__APPLE__)
+#if !defined(_WIN32) && !defined(__APPLE__)
+		if (std::getenv("ASTER_TEST_WINDOW_MANAGER") == nullptr)
+		{
+			std::cout << "Native minimize/restore omitted: the bare Xvfb harness has no window manager\n";
+			return;
+		}
+#endif
 		auto* window = static_cast<GLFWwindow*>(renderer.GetNativeWindow());
 		Require(window != nullptr, "Native lifecycle test requires the renderer's owned window");
 		const auto waitFor = [&](const auto& ready, const char* message)
@@ -170,14 +176,10 @@ namespace
 		glfwHideWindow(window);
 		renderer.PollEvents();
 		std::cout << "Validated native show, minimize, minimized frame, restore, resize and readback\n";
-#else
-		(void)renderer;
-		std::cout << "Native minimize/restore omitted on Linux: the Xvfb harness has no window manager\n";
-#endif
 	}
 } // namespace
 
-void RunRendererTests()
+void RunRendererTests(const std::filesystem::path& evidence)
 {
 	Aster::RendererOptions invalid;
 	invalid.Width = 0;
@@ -332,7 +334,7 @@ void RunRendererTests()
 	second.Shutdown();
 	RequireClean(second);
 	std::cout << "Validated frame readback, resize, thread ownership, and shutdown\n";
-	RunSceneRenderingTests(options);
+	RunSceneRenderingTests(options, evidence);
 }
 
 namespace
@@ -372,16 +374,53 @@ namespace
 				"Motion did not remove old occlusion and create occlusion at the new location");
 	}
 
-	void RunSceneRenderingTests(Aster::RendererOptions options)
+	void RunSceneRenderingTests(Aster::RendererOptions options, const std::filesystem::path& evidence)
 	{
 		options.Width = 128;
 		options.Height = 96;
 		Aster::Renderer renderer(options);
+		const auto [initialWidth, initialHeight] = RequireFramebufferSize(renderer, options.Width, options.Height);
 		Aster::AssetImporter project(std::filesystem::path(ASTER_SOURCE_DIR) / "Assets");
 		Aster::Scene scene("GPU feature checks");
 		Aster::RenderSettings settings;
 		settings.AmbientIntensity = 0;
 		settings.BackgroundColor = {0, 0, 0};
+		nlohmann::json evidenceIndex = {
+			{"Device", renderer.GetDeviceName()}, {"Headless", options.Headless}, {"Images", nlohmann::json::array()}};
+		const auto saveEvidence = [&](const std::string& name, const Aster::RenderImage& image)
+		{
+			if (evidence.empty())
+			{
+				return;
+			}
+			Require(image.Width > 0 && image.Height > 0 &&
+						image.Pixels.size() == static_cast<size_t>(image.Width) * image.Height * 4,
+					"Cannot save incomplete renderer evidence");
+			const std::string filename = name + ".ppm";
+			std::ofstream stream(evidence / filename, std::ios::binary);
+			stream << "P6\n" << image.Width << ' ' << image.Height << "\n255\n";
+			for (size_t offset = 0; offset < image.Pixels.size(); offset += 4)
+			{
+				stream.write(reinterpret_cast<const char*>(image.Pixels.data() + offset), 3);
+			}
+			stream.close();
+			Require(stream.good(), "Writing renderer evidence failed");
+			evidenceIndex["Images"].push_back({{"File", filename},
+											   {"Width", image.Width},
+											   {"Height", image.Height},
+											   {"Scene", scene.Serialize()},
+											   {"Settings",
+												{{"Shadows", settings.Shadows},
+												 {"ShadowResolution", settings.ShadowResolution},
+												 {"ShadowBias", settings.ShadowBias},
+												 {"ShadowSoftness", settings.ShadowSoftness},
+												 {"Exposure", settings.Exposure},
+												 {"AmbientIntensity", settings.AmbientIntensity},
+												 {"AmbientOcclusion", settings.AmbientOcclusion},
+												 {"AmbientOcclusionRadius", settings.AmbientOcclusionRadius},
+												 {"AmbientOcclusionBias", settings.AmbientOcclusionBias},
+												 {"AmbientOcclusionPower", settings.AmbientOcclusionPower}}}});
+		};
 		struct MotionReference
 		{
 			nlohmann::json Scene;
@@ -399,7 +438,7 @@ namespace
 		editorCamera.Projection = glm::perspectiveRH_ZO(glm::radians(60.0f), 128.0f / 96.0f, 0.1f, 100.0f);
 		editorSettings.CameraOverride = editorCamera;
 		renderer.RenderScene(scene, project, editorSettings);
-		RequireColor(renderer.ReadbackRgba8(), 128, 96, {0, 0, 0, 1});
+		RequireColor(renderer.ReadbackRgba8(), initialWidth, initialHeight, {0, 0, 0, 1});
 		editorSettings.CameraOverride->Projection[0][0] = std::numeric_limits<float>::quiet_NaN();
 		RequireThrows<std::invalid_argument>([&]() { renderer.RenderScene(scene, project, editorSettings); },
 											 "Nonfinite editor camera was accepted");
@@ -428,11 +467,11 @@ namespace
 				"Imported textured triangle did not affect center pixels");
 		scene.Get(mesh).MeshRenderer->Visible = false;
 		renderer.RenderScene(scene, project, settings);
-		RequireColor(renderer.ReadbackRgba8(), 128, 96, {0, 0, 0, 1});
+		RequireColor(renderer.ReadbackRgba8(), initialWidth, initialHeight, {0, 0, 0, 1});
 		scene.Get(mesh).MeshRenderer->Visible = true;
 		scene.Get(mesh).Transform.Translation.x = 10;
 		renderer.RenderScene(scene, project, settings);
-		RequireColor(renderer.ReadbackRgba8(), 128, 96, {0, 0, 0, 1});
+		RequireColor(renderer.ReadbackRgba8(), initialWidth, initialHeight, {0, 0, 0, 1});
 		scene.Get(mesh).Transform.Translation.x = 0;
 
 		const auto fixturePath =
@@ -492,7 +531,7 @@ namespace
 		scene.Get(mesh).Transform.Scale.x = 1;
 		scene.Get(mesh).Transform.Rotation.y = glm::pi<float>();
 		renderer.RenderScene(scene, fixtures, settings);
-		RequireColor(renderer.ReadbackRgba8(), 128, 96, {0, 0, 0, 1});
+		RequireColor(renderer.ReadbackRgba8(), initialWidth, initialHeight, {0, 0, 0, 1});
 		scene.Get(mesh).Transform.Rotation.y = 0;
 
 		fixture["materials"][0].erase("extensions");
@@ -532,7 +571,7 @@ namespace
 
 		scene.Get(light).Light->Intensity = 0;
 		renderer.RenderScene(scene, fixtures, settings);
-		RequireColor(renderer.ReadbackRgba8(), 128, 96, {0, 0, 0, 1});
+		RequireColor(renderer.ReadbackRgba8(), initialWidth, initialHeight, {0, 0, 0, 1});
 		scene.Get(light).Light->Intensity = 8;
 		scene.Get(light).Light->Type = Aster::LightType::Point;
 		scene.Get(light).Transform.Translation = {0, 0, 2};
@@ -540,14 +579,14 @@ namespace
 		Require(CenterPixel(renderer.ReadbackRgba8())[0] > 100, "Point light did not illuminate mesh");
 		scene.Get(light).Light->Range = 0.5f;
 		renderer.RenderScene(scene, fixtures, settings);
-		RequireColor(renderer.ReadbackRgba8(), 128, 96, {0, 0, 0, 1});
+		RequireColor(renderer.ReadbackRgba8(), initialWidth, initialHeight, {0, 0, 0, 1});
 		scene.Get(light).Light->Range = 10;
 		scene.Get(light).Light->Type = Aster::LightType::Spot;
 		renderer.RenderScene(scene, fixtures, settings);
 		Require(CenterPixel(renderer.ReadbackRgba8())[0] > 100, "Spot light did not illuminate its cone");
 		scene.Get(light).Transform.Rotation.y = glm::pi<float>();
 		renderer.RenderScene(scene, fixtures, settings);
-		RequireColor(renderer.ReadbackRgba8(), 128, 96, {0, 0, 0, 1});
+		RequireColor(renderer.ReadbackRgba8(), initialWidth, initialHeight, {0, 0, 0, 1});
 		scene.Get(light).Transform.Rotation.y = 0;
 
 		const auto occluder = scene.CreateEntity("Shadow occluder");
@@ -559,6 +598,9 @@ namespace
 		settings.ShadowResolution = 256;
 		for (const auto type : {Aster::LightType::Directional, Aster::LightType::Point, Aster::LightType::Spot})
 		{
+			const std::string evidencePrefix = type == Aster::LightType::Directional ? "ShadowDirectional"
+											   : type == Aster::LightType::Point	 ? "ShadowPoint"
+																					 : "ShadowSpot";
 			scene.Get(light).Light->Type = type;
 			scene.Get(light).Light->Intensity = type == Aster::LightType::Directional ? 3.0f : 25.0f;
 			scene.Get(light).Transform.Translation = {1.5f, 0, 2};
@@ -568,9 +610,11 @@ namespace
 			settings.Shadows = false;
 			renderer.RenderScene(scene, fixtures, settings);
 			const auto unshadowed = renderer.ReadbackRgba8();
+			saveEvidence(evidencePrefix + "Unshadowed", unshadowed);
 			settings.Shadows = true;
 			renderer.RenderScene(scene, fixtures, settings);
 			const auto shadowed = renderer.ReadbackRgba8();
+			saveEvidence(evidencePrefix + "Soft", shadowed);
 			size_t darkened = 0;
 			for (size_t byte = 0; byte < shadowed.Pixels.size(); byte += 4)
 			{
@@ -586,16 +630,20 @@ namespace
 			scene.Get(light).Transform.Rotation.y = -0.5f;
 			renderer.RenderScene(scene, fixtures, settings);
 			const auto movedLightShadow = renderer.ReadbackRgba8();
+			saveEvidence(evidencePrefix + "MovedLightSoft", movedLightShadow);
 			settings.Shadows = false;
 			renderer.RenderScene(scene, fixtures, settings);
 			const auto movedLightLit = renderer.ReadbackRgba8();
+			saveEvidence(evidencePrefix + "MovedLightUnshadowed", movedLightLit);
 			RequireOcclusionMoved(unshadowed, shadowed, movedLightLit, movedLightShadow, 20);
 			scene.Get(occluder).Transform.Translation.x = -0.65f;
 			renderer.RenderScene(scene, fixtures, settings);
 			const auto movedOccluderLit = renderer.ReadbackRgba8();
+			saveEvidence(evidencePrefix + "MovedCasterUnshadowed", movedOccluderLit);
 			settings.Shadows = true;
 			renderer.RenderScene(scene, fixtures, settings);
 			const auto movedOccluderShadow = renderer.ReadbackRgba8();
+			saveEvidence(evidencePrefix + "MovedCasterSoft", movedOccluderShadow);
 			RequireOcclusionMoved(movedLightLit, movedLightShadow, movedOccluderLit, movedOccluderShadow, 20);
 			rememberMotion(movedOccluderShadow);
 			scene.Get(light).Transform = oldLightTransform;
@@ -609,24 +657,32 @@ namespace
 			scene.Get(light).Light->CastShadows = true;
 			settings.ShadowSoftness = 0;
 			renderer.RenderScene(scene, fixtures, settings);
-			Require(renderer.ReadbackRgba8().Pixels != shadowed.Pixels, "PCF softness did not change shadow edges");
+			const auto hardShadow = renderer.ReadbackRgba8();
+			saveEvidence(evidencePrefix + "Hard", hardShadow);
+			Require(hardShadow.Pixels != shadowed.Pixels, "PCF softness did not change shadow edges");
 			scene.Get(occluder).MeshRenderer->Visible = false;
 			settings.Shadows = false;
 			renderer.RenderScene(scene, fixtures, settings);
 			const auto clearReceiver = renderer.ReadbackRgba8();
+			saveEvidence(evidencePrefix + "FlatUnshadowed", clearReceiver);
 			settings.Shadows = true;
-			renderer.RenderScene(scene, fixtures, settings);
-			const auto selfShadow = renderer.ReadbackRgba8();
-			size_t artifacts = 0;
-			for (size_t byte = 0; byte < selfShadow.Pixels.size(); byte += 4)
+			for (const float softness : {0.0f, 1.5f, 3.0f})
 			{
-				if (int(clearReceiver.Pixels[byte]) - int(selfShadow.Pixels[byte]) > 10)
+				settings.ShadowSoftness = softness;
+				renderer.RenderScene(scene, fixtures, settings);
+				const auto selfShadow = renderer.ReadbackRgba8();
+				saveEvidence(evidencePrefix + "FlatSoftness" + std::to_string(softness), selfShadow);
+				size_t artifacts = 0;
+				for (size_t byte = 0; byte < selfShadow.Pixels.size(); byte += 4)
 				{
-					++artifacts;
+					if (int(clearReceiver.Pixels[byte]) - int(selfShadow.Pixels[byte]) > 10)
+					{
+						++artifacts;
+					}
 				}
+				std::cout << "Self-shadow artifacts at softness " << softness << ": " << artifacts << '\n';
+				Require(artifacts < 10, "Isolated flat receiver exhibits self-shadow acne");
 			}
-			std::cout << "Self-shadow artifacts " << artifacts << '\n';
-			Require(artifacts < 10, "Isolated flat receiver exhibits self-shadow acne");
 			scene.Get(occluder).MeshRenderer->Visible = true;
 
 			settings.ShadowSoftness = 1.5f;
@@ -638,9 +694,11 @@ namespace
 		settings.AmbientOcclusion = false;
 		renderer.RenderScene(scene, fixtures, settings);
 		const auto ambientWithoutAo = renderer.ReadbackRgba8();
+		saveEvidence("AoOff", ambientWithoutAo);
 		settings.AmbientOcclusion = true;
 		renderer.RenderScene(scene, fixtures, settings);
 		const auto ambientWithAo = renderer.ReadbackRgba8();
+		saveEvidence("AoOn", ambientWithAo);
 		size_t occludedPixels = 0;
 		for (size_t byte = 0; byte < ambientWithAo.Pixels.size(); byte += 4)
 		{
@@ -656,26 +714,34 @@ namespace
 		scene.Get(occluder).Transform.Translation.x = 0.65f;
 		renderer.RenderScene(scene, fixtures, settings);
 		const auto movedAo = renderer.ReadbackRgba8();
+		saveEvidence("AoMovedOn", movedAo);
 		rememberMotion(movedAo);
 		settings.AmbientOcclusion = false;
 		renderer.RenderScene(scene, fixtures, settings);
-		RequireOcclusionMoved(ambientWithoutAo, ambientWithAo, renderer.ReadbackRgba8(), movedAo, 8);
+		const auto movedWithoutAo = renderer.ReadbackRgba8();
+		saveEvidence("AoMovedOff", movedWithoutAo);
+		RequireOcclusionMoved(ambientWithoutAo, ambientWithAo, movedWithoutAo, movedAo, 8);
 		settings.AmbientOcclusion = true;
 		scene.Get(occluder).Transform.Translation.x = 2.1f;
 		renderer.RenderScene(scene, fixtures, settings);
 		const auto edgeAo = renderer.ReadbackRgba8();
+		saveEvidence("AoEdgeOn", edgeAo);
 		rememberMotion(edgeAo);
 		scene.Get(occluder).Transform.Translation.x = 3.0f;
 		renderer.RenderScene(scene, fixtures, settings);
 		const auto offscreenAo = renderer.ReadbackRgba8();
+		saveEvidence("AoOffscreenOn", offscreenAo);
 		scene.Get(occluder).MeshRenderer->Visible = false;
 		renderer.RenderScene(scene, fixtures, settings);
 		const auto flatAo = renderer.ReadbackRgba8();
+		saveEvidence("AoFlatOn", flatAo);
 		Require(offscreenAo.Pixels == flatAo.Pixels, "Offscreen occluder left stale SSAO on the receiver");
 		Require(edgeAo.Pixels != flatAo.Pixels, "SSAO edge-motion fixture did not intersect the viewport");
 		settings.AmbientOcclusion = false;
 		renderer.RenderScene(scene, fixtures, settings);
-		Require(renderer.ReadbackRgba8().Pixels == flatAo.Pixels, "SSAO darkened an isolated flat receiver");
+		const auto flatWithoutAo = renderer.ReadbackRgba8();
+		saveEvidence("AoFlatOff", flatWithoutAo);
+		Require(flatWithoutAo.Pixels == flatAo.Pixels, "SSAO darkened an isolated flat receiver");
 		scene.Get(occluder).MeshRenderer->Visible = true;
 		scene.Get(occluder).Transform.Translation.x = 0;
 		settings.AmbientOcclusion = true;
@@ -688,10 +754,12 @@ namespace
 		scene.Get(light).Light->Type = Aster::LightType::Directional;
 		renderer.RenderScene(scene, fixtures, settings);
 		const auto directWithoutAo = renderer.ReadbackRgba8();
+		saveEvidence("AoDirectOff", directWithoutAo);
 		settings.AmbientOcclusion = true;
 		renderer.RenderScene(scene, fixtures, settings);
-		Require(renderer.ReadbackRgba8().Pixels == directWithoutAo.Pixels,
-				"SSAO incorrectly attenuated direct lighting");
+		const auto directWithAo = renderer.ReadbackRgba8();
+		saveEvidence("AoDirectOn", directWithAo);
+		Require(directWithAo.Pixels == directWithoutAo.Pixels, "SSAO incorrectly attenuated direct lighting");
 		auto invalidAoSettings = settings;
 		invalidAoSettings.AmbientOcclusionRadius = std::numeric_limits<float>::quiet_NaN();
 		RequireThrows<std::invalid_argument>([&]() { renderer.RenderScene(scene, fixtures, invalidAoSettings); },
@@ -715,6 +783,7 @@ namespace
 		Require(reloaded[2] > 200 && reloaded[0] < 3 && reloaded[1] < 3,
 				"Asset invalidation did not replace GPU material");
 		renderer.Resize(96, 80);
+		const auto [sceneWidth, sceneHeight] = RequireFramebufferSize(renderer, 96, 80);
 		renderer.RenderScene(scene, fixtures, settings);
 		Require(CenterPixel(renderer.ReadbackRgba8())[2] > 200, "HDR scene pass failed after resize");
 		Aster::HDRImageAsset constantSky;
@@ -753,7 +822,7 @@ namespace
 		}
 		settings.DrawSky = false;
 		renderer.RenderScene(scene, fixtures, settings);
-		RequireColor(renderer.ReadbackRgba8(), 96, 80, {0, 0, 0, 1});
+		RequireColor(renderer.ReadbackRgba8(), sceneWidth, sceneHeight, {0, 0, 0, 1});
 		fixture["materials"][0]["emissiveFactor"] = {0, 0, 0};
 		fixture["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"] = {1, 1, 1, 1};
 		writeFixture("white.gltf");
@@ -765,11 +834,11 @@ namespace
 				"Irradiance/specular IBL did not illuminate an unlit scene");
 		settings.EnvironmentIntensity = 0;
 		renderer.RenderScene(scene, fixtures, settings);
-		RequireColor(renderer.ReadbackRgba8(), 96, 80, {0, 0, 0, 1});
+		RequireColor(renderer.ReadbackRgba8(), sceneWidth, sceneHeight, {0, 0, 0, 1});
 		settings.EnvironmentIntensity = 1;
 		settings.UseSceneEnvironment = true;
 		renderer.RenderScene(scene, fixtures, settings);
-		RequireColor(renderer.ReadbackRgba8(), 96, 80, {0, 0, 0, 1});
+		RequireColor(renderer.ReadbackRgba8(), sceneWidth, sceneHeight, {0, 0, 0, 1});
 		scene.Get(mesh).MeshRenderer->Visible = false;
 		settings.DrawSky = true;
 		scene.SetEnvironment({"Environment/StudioSmall09.hdr", 0.5f, 0.0f});
@@ -781,7 +850,7 @@ namespace
 				"Persisted environment yaw did not rotate the Poly Haven sky");
 		scene.SetEnvironment({"Environment/StudioSmall09.hdr", 0.0f, 1.7f});
 		renderer.RenderScene(scene, project, settings);
-		RequireColor(renderer.ReadbackRgba8(), 96, 80, {0, 0, 0, 1});
+		RequireColor(renderer.ReadbackRgba8(), sceneWidth, sceneHeight, {0, 0, 0, 1});
 		scene.SetEnvironment({});
 		scene.Get(mesh).MeshRenderer->Visible = true;
 		scene.Get(mesh).Transform = {};
@@ -882,7 +951,7 @@ namespace
 		material["pbrMetallicRoughness"]["baseColorFactor"] = {1, 1, 1, 0.25f};
 		material["alphaMode"] = "MASK";
 		material["alphaCutoff"] = 0.5f;
-		RequireColor(renderMaterial(material), 96, 80, {0, 0, 0, 1});
+		RequireColor(renderMaterial(material), sceneWidth, sceneHeight, {0, 0, 0, 1});
 		material["alphaCutoff"] = 0.1f;
 		Require(CenterPixel(renderMaterial(material))[0] > 200, "Alpha mask discarded a fragment above cutoff");
 		material["alphaMode"] = "BLEND";
@@ -919,7 +988,7 @@ namespace
 		material = whiteMaterial;
 		material["extensions"]["KHR_materials_unlit"] = nlohmann::json::object();
 		material["pbrMetallicRoughness"]["baseColorTexture"] = {{"index", 4}, {"texCoord", 1}};
-		RequireColor(renderMaterial(material), 96, 80, {0, 0, 0, 1});
+		RequireColor(renderMaterial(material), sceneWidth, sceneHeight, {0, 0, 0, 1});
 		material["pbrMetallicRoughness"]["baseColorTexture"]["extensions"]["KHR_texture_transform"] = {
 			{"offset", {0.5f, 0.0f}}};
 		nearPixel(CenterPixel(renderMaterial(material)), ToneMap(1, 1),
@@ -979,6 +1048,14 @@ namespace
 		}
 		std::cout << "Validated moving lights, shadow casters, SSAO viewport edges, and " << motionReferences.size()
 				  << " fresh-renderer motion references\n";
+		if (!evidence.empty())
+		{
+			evidenceIndex["Passed"] = true;
+			std::ofstream stream(evidence / "Index.json");
+			stream << evidenceIndex.dump(2) << '\n';
+			stream.close();
+			Require(stream.good(), "Writing renderer evidence index failed");
+		}
 		std::cout << "Validated glTF textures, camera, transforms, PBR lights, HDR exposure, IBL, sky, asset reload, "
 					 "shadows, SSAO, and scene "
 					 "resize\n";

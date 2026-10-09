@@ -8,13 +8,12 @@ APIs without requesting permission or changing TCC. Missing access fails the tes
 import argparse
 import json
 from pathlib import Path
-import platform
 import shutil
 import subprocess
-import sys
 import tempfile
 
 from BlockStackTests import state
+from MacOSNativeWindow import compile_helper
 from ExportTests import export, macos_shipping_environment, package_executable
 
 
@@ -23,36 +22,9 @@ def main():
     for name in ("editor", "runtime", "assets", "notices", "artifacts"):
         parser.add_argument(f"--{name}", type=Path, required=True)
     args = parser.parse_args()
-    if sys.platform != "darwin" or int(platform.mac_ver()[0].split(".")[0]) < 14:
-        raise RuntimeError("MacOSRuntimeInput requires macOS 14+ with an interactive desktop")
     editor, runtime, assets, notices, artifacts = (getattr(args, name).resolve()
         for name in ("editor", "runtime", "assets", "notices", "artifacts"))
-    artifacts.mkdir(parents=True, exist_ok=True)
-    helper_directory = artifacts / "NativeHelper"
-    helper_directory.mkdir(exist_ok=True)
-    helper = helper_directory / "MacOSRuntimeInput"
-    source_file = Path(__file__).with_name("MacOSRuntimeInput.swift").resolve()
-    architecture = platform.machine()
-    assert architecture in ("arm64", "x86_64"), f"Unsupported native helper architecture: {architecture}"
-    command = ["/usr/bin/xcrun", "swiftc", "-parse-as-library", "-swift-version", "5", "-O", "-warnings-as-errors",
-               "-target", f"{architecture}-apple-macosx14.0", str(source_file), "-o", str(helper),
-               "-module-cache-path", str(helper_directory / "ModuleCache")]
-    for framework in ("AppKit", "ApplicationServices", "ScreenCaptureKit", "CryptoKit"):
-        command.extend(("-framework", framework))
-    compiled = subprocess.run(command, capture_output=True, text=True, timeout=120)
-    (artifacts / "MacOSRuntimeInputBuild.log").write_text(compiled.stdout + compiled.stderr)
-    assert compiled.returncode == 0, f"Native macOS helper compilation failed: {compiled.stderr}"
-
-    # Check the helper's actual permissions before exporting or launching a game.
-    # The interaction process repeats the checks before its first native operation.
-    preflight = subprocess.run([str(helper), "--preflight"], capture_output=True, text=True, timeout=15)
-    (artifacts / "MacOSRuntimeInputPermissions.json").write_text(preflight.stdout)
-    (artifacts / "MacOSRuntimeInputPermissions.stderr").write_text(preflight.stderr)
-    assert preflight.returncode == 0, \
-        f"macOS native permissions are unavailable; no prompt or system change was attempted: {preflight.stderr}"
-    permissions = json.loads(preflight.stdout)
-    assert all(permissions.get(name) is True for name in ("accessibility", "post_event", "screen_capture")), \
-        f"Native helper did not establish its required permissions: {permissions}"
+    helper, permissions = compile_helper("MacOSRuntimeInput", artifacts)
 
     output = artifacts / "MacOSRuntimeInput.aster"
     stdout_path = artifacts / "MacOSRuntimeInput.json"
