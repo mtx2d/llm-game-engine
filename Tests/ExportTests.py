@@ -73,6 +73,17 @@ def main():
               "Manifest must contain portable relative paths")
         check(not any(path.is_symlink() for path in output.rglob("*")), "Package contains source links")
         check(not (output / args.editor.name).exists(), "Editor executable was included in runtime package")
+        if os.name == "nt":
+            companion_loader = args.runtime.parent / "vulkan-1.dll"
+            exported_loader = output / "vulkan-1.dll"
+            if companion_loader.exists():
+                check(exported_loader.is_file() and exported_loader.read_bytes() == companion_loader.read_bytes(),
+                      "Export omitted or changed the application-local Vulkan loader")
+                check((output / "ThirdParty/Licenses/vulkan_loader.txt").is_file() and
+                      (output / "ThirdParty/Licenses/vulkan_loader_notices.txt").is_file(),
+                      "Exported Vulkan loader is missing its third-party license")
+            else:
+                check(not exported_loader.exists(), "Export unexpectedly added a Vulkan loader")
 
         moved = root / "Moved Game With Spaces"
         output.rename(moved)
@@ -119,6 +130,14 @@ def main():
             no_layers.mkdir()
             shipping_environment["VK_LAYER_PATH"] = str(no_layers)
             shipping_environment["VK_LOADER_LAYERS_DISABLE"] = "*validation*"
+            if os.name == "nt":
+                # The package must find its companion loader and normal OS/VC
+                # runtime libraries without inheriting SDK or build-tool paths.
+                system_root = Path(os.environ["SystemRoot"])
+                shipping_environment["PATH"] = os.pathsep.join(str(path) for path in
+                    (system_root / "System32", system_root, system_root / "System32/Wbem"))
+                for variable in ("VULKAN_SDK", "VK_SDK_PATH", "ASTER_VULKAN_LOADER"):
+                    shipping_environment.pop(variable, None)
             process = subprocess.run([str(executable), "--window", "--steps", "5"], cwd=elsewhere,
                                      env=shipping_environment, text=True, capture_output=True, timeout=45)
             check(process.returncode == 0, f"Graphical shipping game required development paths/layers: {process.stdout}\n{process.stderr}")
@@ -170,6 +189,23 @@ def main():
             (moved / "Game.json").write_text(good_manifest)
 
         shutil.copytree(args.assets, source)
+        if os.name == "nt":
+            runtime_fixture = root / "Runtime Companion Failure"
+            runtime_fixture.mkdir()
+            fixture_executable = runtime_fixture / args.runtime.name
+            shutil.copy2(args.runtime, fixture_executable)
+            bad_loader = runtime_fixture / "vulkan-1.dll"
+            loader_failure = root / "Loader Failure"
+            bad_loader.mkdir()
+            response = export(args.editor, fixture_executable, args.notices, source, loader_failure)
+            check(not response["ok"] and not loader_failure.exists(),
+                  "Exporter accepted a directory instead of its Vulkan loader")
+            bad_loader.rmdir()
+            bad_loader.write_bytes(b"")
+            response = export(args.editor, fixture_executable, args.notices, source, loader_failure)
+            check(not response["ok"] and not loader_failure.exists(),
+                  "Exporter accepted an empty Vulkan loader")
+            check(not list(root.glob("*.aster-export-*")), "Rejected loader left a staged export")
         occupied = root / "Occupied"
         occupied.mkdir()
         (occupied / "UserData.txt").write_text("keep me")

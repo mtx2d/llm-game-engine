@@ -34,6 +34,17 @@ xvfb-run -a -s '-screen 0 1600x1000x24' python3 Tests/GuiTests.py \
   --editor build/debug/AsterEditor --assets Assets --artifacts build/gui-evidence
 ```
 
+The optional upstream glTF corpus downloads five pinned Khronos models and their notices into the ignored build tree. Its test checks imported data and rendered visibility/rotation, and saves images under `build/debug/asset-corpus-evidence`:
+
+```sh
+python3 scripts/FetchAssetCorpus.py
+cmake --preset debug -DASTER_ASSET_CORPUS="$PWD/build/asset-corpus"
+cmake --build --preset debug --parallel 4
+ctest --preset debug -R AssetCorpus
+```
+
+Native Windows and macOS CPU suites pass CI. Graphics validation uses `scripts/SetupWindowsVulkan.ps1` on Windows and `scripts/BootstrapMacOS.sh` on macOS; both fetch verified toolchains into `build/`. The Windows CI driver is SwiftShader software Vulkan. The macOS toolchain uses MoltenVK and requires an actual Metal-capable device. These scripts prepare dependencies; platform graphics and shipping support require the executable checks recorded in the implementation status.
+
 ## Development
 
 Follow [AGENTS.md](AGENTS.md) and repository workflows in `skills/`. Review and test changes before committing. Third-party revisions and archive hashes are in `cmake/Dependencies.lock.json`. Engine code follows Hazel naming conventions.

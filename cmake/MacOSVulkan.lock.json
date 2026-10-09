@@ -1,0 +1,38 @@
+{
+  "vulkan_headers": {
+    "URL": "https://codeload.github.com/KhronosGroup/Vulkan-Headers/tar.gz/refs/tags/v1.4.352",
+    "SHA256": "4850909d22a8a9767c27daea2b972e49d7c298560573d5b6221ee50db9bf49db"
+  },
+  "vulkan_loader": {
+    "URL": "https://codeload.github.com/KhronosGroup/Vulkan-Loader/tar.gz/ebc06b83174f6b5200eb21de3e83fc0d03ddcd18",
+    "SHA256": "adbbf3460816cc8a4976713826c2aa0543b277049650f610c4217693fe3d4371"
+  },
+  "vulkan_utility": {
+    "URL": "https://codeload.github.com/KhronosGroup/Vulkan-Utility-Libraries/tar.gz/28d3b5930a6da0e4f15040679d8b51dda0b29c86",
+    "SHA256": "66a89b8ee9224c179eee6c2751cc799011c86406739d30cfcf0f6efb82646eab"
+  },
+  "spirv_headers": {
+    "URL": "https://codeload.github.com/KhronosGroup/SPIRV-Headers/tar.gz/fe44b2002bf7871e2e92fc001bc9f6e09f92194f",
+    "SHA256": "78a19a22810130602110761b7eaa47e49b778ea61bc7b05377c9794f54d2a426"
+  },
+  "spirv_tools": {
+    "URL": "https://codeload.github.com/KhronosGroup/SPIRV-Tools/tar.gz/18b08af19b08515d5a1749adbdb05bc4369a57ed",
+    "SHA256": "3445457d807912b879f526eade9e191235e1bd272ff8e70e7fd8b7e5435e2397"
+  },
+  "vulkan_validation": {
+    "URL": "https://codeload.github.com/KhronosGroup/Vulkan-ValidationLayers/tar.gz/aaf110dd4cd281df184373715d5ae26bd7d0aff3",
+    "SHA256": "47372ea1906d4058cb34a0094749c81ab6f57411ccd9ca2ab94764169acfaa90"
+  },
+  "glslang": {
+    "URL": "https://codeload.github.com/KhronosGroup/glslang/tar.gz/275822a6261ee689aadb1da5f09a0ec2f058685c",
+    "SHA256": "971848a1cc639ce8dc244e778b17efe0f690e32ac398a75e31d1c67ad06d3e0a"
+  },
+  "vulkan_tools": {
+    "URL": "https://codeload.github.com/KhronosGroup/Vulkan-Tools/tar.gz/822a2d8efb2ec261295bf40bd17b60252823b459",
+    "SHA256": "71b76bcd3b0c20a811dcbbeb5756a8840cd108a5c2995f12b00b7c3ddbfe0157"
+  },
+  "moltenvk": {
+    "URL": "https://github.com/KhronosGroup/MoltenVK/releases/download/v1.4.2/MoltenVK-macos.tar",
+    "SHA256": "f95765a6229cb7b915990a2890ce12ebe36a730b021545d3d52ae69ce4c4024e"
+  }
+}

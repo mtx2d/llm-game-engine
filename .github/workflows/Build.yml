@@ -28,9 +28,11 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install Vulkan and window dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers glslang-tools libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev xvfb xdotool
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers glslang-tools libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxdamage1 xvfb xdotool
+      - name: Fetch verified upstream glTF corpus
+        run: python3 scripts/FetchAssetCorpus.py
       - name: Configure
-        run: cmake --preset debug
+        run: cmake --preset debug -DASTER_ASSET_CORPUS="$PWD/build/asset-corpus"
       - name: Build
         run: cmake --build --preset debug --parallel 3
       - name: Test CPU and headless Vulkan
@@ -46,6 +48,118 @@ jobs:
             build/debug/Testing/Temporary/*.log
             build/debug/gui-evidence/*
             build/debug/runtime-input-evidence/*
+            build/debug/asset-corpus-evidence/*
+  macos-vulkan:
+    runs-on: macos-15
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Identify compiler and SDK image for cached objects
+        id: image
+        run: printf 'version=%s\n' "${ImageVersion:?}" >> "$GITHUB_OUTPUT"
+      - name: Restore pinned native toolchain
+        id: macos-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            build/macos-vulkan
+            build/_archives/macos-*
+          key: macos-${{ runner.arch }}-${{ steps.image.outputs.version }}-vulkan-${{ hashFiles('cmake/MacOSVulkan.lock.json', 'scripts/BootstrapMacOS.sh') }}
+      - name: Build verified Vulkan and MoltenVK dependencies
+        run: bash scripts/BootstrapMacOS.sh
+      - name: Preserve verified toolchain
+        if: steps.macos-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            build/macos-vulkan
+            build/_archives/macos-*
+          key: ${{ steps.macos-cache.outputs.cache-primary-key }}
+      - name: Record native graphics capabilities
+        run: |
+          source build/macos-vulkan/Environment.sh
+          mkdir -p build/macos-evidence
+          system_profiler SPDisplaysDataType > build/macos-evidence/Displays.txt
+          vulkaninfo --summary 2>&1 | tee build/macos-evidence/VulkanInfo.txt
+      - name: Configure and build native editor and runtime
+        run: |
+          source build/macos-vulkan/Environment.sh
+          cmake -S . -B build/macos -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build/macos --parallel 3
+      - name: Test native CPU and MoltenVK output
+        run: |
+          source build/macos-vulkan/Environment.sh
+          ctest --test-dir build/macos --output-on-failure
+      - name: Test GLFW Metal presentation
+        run: |
+          source build/macos-vulkan/Environment.sh
+          ASTER_TEST_WINDOW=1 build/macos/AsterRendererTests
+      - name: Preserve native macOS evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: macos-vulkan
+          path: |
+            build/macos-evidence/*
+            build/macos/Testing/Temporary/*.log
+            build/macos-vulkan/build/*/CMakeFiles/CMakeConfigureLog.yaml
+  windows-vulkan:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Identify compiler image for cached objects
+        id: image
+        shell: pwsh
+        run: |
+          if (-not $env:ImageVersion) { throw 'Runner image version is missing.' }
+          "version=$env:ImageVersion" >> $env:GITHUB_OUTPUT
+      - name: Restore pinned native toolchain
+        id: windows-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: build/windows-vulkan
+          key: windows-x64-${{ steps.image.outputs.version }}-vulkan-${{ hashFiles('scripts/SetupWindowsVulkan.ps1') }}
+      - name: Prepare verified Vulkan SDK and software ICD
+        shell: pwsh
+        run: ./scripts/SetupWindowsVulkan.ps1
+      - name: Preserve verified toolchain
+        if: steps.windows-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: build/windows-vulkan
+          key: ${{ steps.windows-cache.outputs.cache-primary-key }}
+      - name: Configure and build native editor and runtime
+        shell: pwsh
+        run: |
+          cmake -S . -B build/windows-native -A x64 -DASTER_BUILD_RENDERER=ON -DASTER_BUILD_GUI=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build/windows-native --config Release --parallel 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item -LiteralPath $env:ASTER_VULKAN_LOADER -Destination build/windows-native/Release/vulkan-1.dll
+      - name: Test native CPU and Vulkan output
+        run: ctest --test-dir build/windows-native -C Release --output-on-failure
+      - name: Test GLFW Win32 presentation
+        shell: pwsh
+        run: |
+          $env:ASTER_TEST_WINDOW = '1'
+          & build/windows-native/Release/AsterRendererTests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test relocated graphical Windows export
+        run: >-
+          python Tests/ExportTests.py --editor build/windows-native/Release/AsterEditor.exe
+          --runtime build/windows-native/Release/AsterRuntime.exe --assets Assets --notices ThirdParty --graphical
+      - name: Preserve native Windows evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-vulkan
+          path: |
+            build/windows-vulkan/evidence/*
+            build/windows-native/Testing/Temporary/*.log
   sanitizers:
     runs-on: ubuntu-24.04
     steps:

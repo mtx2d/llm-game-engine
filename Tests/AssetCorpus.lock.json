@@ -1,0 +1,92 @@
+{
+  "Revision": "edc7c9e67c639d230715049ee31f9a96a6babbbe",
+  "Models": [
+    {
+      "Name": "Lantern",
+      "Files": [
+        {
+          "Path": "Lantern/Lantern.glb",
+          "URL": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/Lantern/glTF-Binary/Lantern.glb",
+          "SHA256": "a79458c4b02d695187a952f23a63b8bf278e7bc3d316a3c2a314f2d6974181f1"
+        },
+        {
+          "Path": "Lantern/README.md",
+          "URL": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/Lantern/README.md",
+          "SHA256": "58a4903ae9c0bbb7d3f6ff1b9263b3b480edb7ca82109afdb06723275835a6c7"
+        }
+      ]
+    },
+    {
+      "Name": "BoomBox",
+      "Files": [
+        {
+          "Path": "BoomBox/BoomBox.glb",
+          "URL": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/BoomBox/glTF-Binary/BoomBox.glb",
+          "SHA256": "f8b918445ebdd006768232205a62f5182d2208ca57f84c6ccc084943c0bc8f15"
+        },
+        {
+          "Path": "BoomBox/README.md",
+          "URL": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/BoomBox/README.md",
+          "SHA256": "4a0ba4006d903b85dea52788053399d835b22ebb3ab4b1e305ccee103d7b2271"
+        }
+      ]
+    },
+    {
+      "Name": "AlphaBlendModeTest",
+      "Files": [
+        {
+          "Path": "AlphaBlendModeTest/AlphaBlendModeTest.glb",
+          "URL": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/AlphaBlendModeTest/glTF-Binary/AlphaBlendModeTest.glb",
+          "SHA256": "37c3577d143071b42dd46e9d942b157837eb25c6340112171d7faecaa987b14e"
+        },
+        {
+          "Path": "AlphaBlendModeTest/README.md",
+          "URL": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/AlphaBlendModeTest/README.md",
+          "SHA256": "46fc7fc9379cf043985b3555d4d06e8383bdf2195c421ce2c494988c8bfe4bdc"
+        }
+      ]
+    },
+    {
+      "Name": "NormalTangentTest",
+      "Files": [
+        {
+          "Path": "NormalTangentTest/NormalTangentTest.glb",
+          "URL": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/NormalTangentTest/glTF-Binary/NormalTangentTest.glb",
+          "SHA256": "5ac0932355ae1ea05a7485eeddcc3f1fbe56c678e00b519075feced80e9e9d6a"
+        },
+        {
+          "Path": "NormalTangentTest/README.md",
+          "URL": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/NormalTangentTest/README.md",
+          "SHA256": "933df94257d7282e55491f3183634fe9c028773585698376f8abcd32bf3f0d1b"
+        }
+      ]
+    },
+    {
+      "Name": "TextureCoordinateTest",
+      "Files": [
+        {
+          "Path": "TextureCoordinateTest/TextureCoordinateTest.glb",
+          "URL": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/TextureCoordinateTest/glTF-Binary/TextureCoordinateTest.glb",
+          "SHA256": "fe75a63a0423c9a682bf46c3045b6328ae9c55abefc9a50adf3ec1d6dc6ea3b9"
+        },
+        {
+          "Path": "TextureCoordinateTest/README.md",
+          "URL": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/TextureCoordinateTest/README.md",
+          "SHA256": "32f006e23ae1aa9ec5917e1bcfa7169724e8ef4fff0b24d9e0a0efc7ac5574a8"
+        }
+      ]
+    }
+  ],
+  "Licenses": [
+    {
+      "Path": "LICENSES/CC0-1.0.txt",
+      "URL": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/LICENSES/CC0-1.0.txt",
+      "SHA256": "a43fc2004d1e073f1107a1f6146664d08dae6cea93cb828742a4bec6da828e91"
+    },
+    {
+      "Path": "LICENSES/CC-BY-4.0.txt",
+      "URL": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/LICENSES/CC-BY-4.0.txt",
+      "SHA256": "c8041334a99cb48852b2139253cbde5f8ac87e27f124aed51223e0d5bf0080eb"
+    }
+  ]
+}

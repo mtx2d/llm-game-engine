@@ -58,9 +58,9 @@ endforeach()
 add_library(AsterLua STATIC ${luaCppSources})
 target_compile_features(AsterLua PRIVATE cxx_std_20)
 if(MSVC)
-  # Lua errors use C++ exceptions through its extern-C API. /EHsc's default
-  # no-throw assumption for C linkage would otherwise skip binding destructors.
-  target_compile_options(AsterLua PUBLIC /EHsc-)
+  # Also protect consumers that call Lua's C-linkage API (including Simulation).
+  # Clear only the C no-throw assumption; preserve a user's /EHs or /EHa model.
+  target_compile_options(AsterLua PUBLIC /EHc-)
 endif()
 target_include_directories(AsterLua SYSTEM PUBLIC "${lua_SOURCE_DIR}/src")
 if(UNIX)
@@ -78,6 +78,8 @@ set(INSTALL_LIBS OFF CACHE BOOL "" FORCE)
 set(USE_GRAPHICAL_BENCHMARK OFF CACHE BOOL "" FORCE)
 aster_dependency(bullet)
 FetchContent_MakeAvailable(bullet)
+# Only the linked dynamics/collision/math targets belong to Aster's default build.
+set_property(DIRECTORY "${bullet_SOURCE_DIR}" PROPERTY EXCLUDE_FROM_ALL TRUE)
 aster_dependency(miniaudio)
 FetchContent_MakeAvailable(miniaudio)
 

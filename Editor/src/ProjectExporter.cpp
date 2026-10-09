@@ -284,7 +284,20 @@ namespace Aster
 				"Output directory must be absent or empty");
 		const auto runtime = std::filesystem::canonical(settings.RuntimeExecutable);
 		Require(std::filesystem::is_regular_file(runtime), "Runtime executable is not a file");
-#if !defined(_WIN32)
+#if defined(_WIN32)
+		// A runtime supplied with an application-local Vulkan loader must retain
+		// that dependency when moved. A system-installed loader remains supported.
+		const auto vulkanLoader = runtime.parent_path() / "vulkan-1.dll";
+		const bool hasVulkanLoader = std::filesystem::exists(vulkanLoader) || std::filesystem::is_symlink(vulkanLoader);
+		if (hasVulkanLoader)
+		{
+			Require(std::filesystem::is_regular_file(vulkanLoader) && !std::filesystem::is_symlink(vulkanLoader),
+					"Companion vulkan-1.dll must be a regular file without a symbolic link");
+			const auto loaderSize = std::filesystem::file_size(vulkanLoader);
+			Require(loaderSize > 0 && loaderSize <= 256ULL * 1024ULL * 1024ULL,
+					"Companion vulkan-1.dll size must be in (0,256 MiB]");
+		}
+#else
 		const auto executePermissions = std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
 										std::filesystem::perms::others_exec;
 		Require((std::filesystem::status(runtime).permissions() & executePermissions) != std::filesystem::perms::none,
@@ -292,6 +305,14 @@ namespace Aster
 #endif
 		const auto notices = std::filesystem::canonical(settings.ThirdPartyNotices);
 		Require(std::filesystem::is_directory(notices), "Third-party notices must be a directory");
+#if defined(_WIN32)
+		if (hasVulkanLoader)
+		{
+			Require(std::filesystem::is_regular_file(notices / "Licenses/vulkan_loader.txt") &&
+						std::filesystem::is_regular_file(notices / "Licenses/vulkan_loader_notices.txt"),
+					"Bundled vulkan-1.dll requires Vulkan loader license and permissive notices");
+		}
+#endif
 		const auto scenePath = ResolveFile(root, settings.ScenePath);
 		ValidateSceneAssets(root, Scene::Load(scenePath));
 		const auto assetFiles = CollectFiles(root);
@@ -323,6 +344,12 @@ namespace Aster
 			const auto executableName = "AsterGame";
 #endif
 			std::filesystem::copy_file(runtime, staging / executableName);
+#if defined(_WIN32)
+			if (hasVulkanLoader)
+			{
+				std::filesystem::copy_file(vulkanLoader, staging / "vulkan-1.dll");
+			}
+#endif
 			std::ofstream manifest(staging / "Game.json", std::ios::binary);
 			manifest.exceptions(std::ios::badbit | std::ios::failbit);
 			manifest
