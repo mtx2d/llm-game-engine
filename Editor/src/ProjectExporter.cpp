@@ -6,13 +6,19 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <random>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#ifdef __APPLE__
+#include <mach-o/loader.h>
+#endif
 
 namespace Aster
 {
@@ -269,6 +275,132 @@ namespace Aster
 				std::filesystem::copy_file(file.Source, output);
 			}
 		}
+
+#ifdef __APPLE__
+		bool IsSupportedDriverVersion(const std::string& version)
+		{
+			std::array<std::uint32_t, 3> parts{};
+			std::size_t offset = 0;
+			for (std::size_t index = 0; index < parts.size(); ++index)
+			{
+				const auto end = version.find('.', offset);
+				if ((index + 1 == parts.size()) != (end == std::string::npos))
+				{
+					return false;
+				}
+				const auto length = end == std::string::npos ? version.size() - offset : end - offset;
+				const auto parsed =
+					std::from_chars(version.data() + offset, version.data() + offset + length, parts[index]);
+				if (parsed.ec != std::errc{} || parsed.ptr != version.data() + offset + length)
+				{
+					return false;
+				}
+				offset += length + 1;
+			}
+			return parts[0] <= 127 && parts[1] <= 1023 && parts[2] <= 4095 &&
+				   (parts[0] > 1 || (parts[0] == 1 && parts[1] >= 3));
+		}
+
+		void ValidateCompanion(const Path& path, std::uintmax_t maximumSize)
+		{
+			Require(std::filesystem::is_regular_file(path) && !std::filesystem::is_symlink(path),
+					"Missing or nonregular macOS runtime companion: " + path.string());
+			const auto size = std::filesystem::file_size(path);
+			Require(size > 0 && size <= maximumSize, "Invalid macOS runtime companion size: " + path.string());
+		}
+
+		bool RequiresVulkanBundle(const Path& runtime)
+		{
+			// Inspect the actual supplied executable, so a deleted companion folder
+			// cannot turn a graphical runtime into an apparently valid CPU package.
+			std::ifstream stream(runtime, std::ios::binary);
+			mach_header_64 header{};
+			stream.read(reinterpret_cast<char*>(&header), sizeof(header));
+			Require(stream.good() && header.magic == MH_MAGIC_64 && header.filetype == MH_EXECUTE,
+					"Runtime must be a native 64-bit Mach-O executable (universal archives are not supported)");
+			Require(header.ncmds > 0 && header.sizeofcmds <= 1024 * 1024 &&
+						header.ncmds <= header.sizeofcmds / sizeof(load_command),
+					"Invalid Mach-O runtime load-command bounds");
+			std::vector<char> commands(header.sizeofcmds);
+			stream.read(commands.data(), static_cast<std::streamsize>(commands.size()));
+			Require(stream.good(), "Truncated Mach-O runtime load commands");
+			bool requiresVulkan = false;
+			bool hasBundleRPath = false;
+			std::size_t offset = 0;
+			for (std::uint32_t index = 0; index < header.ncmds; ++index)
+			{
+				Require(offset <= commands.size() && commands.size() - offset >= sizeof(load_command),
+						"Truncated Mach-O runtime load command");
+				load_command command{};
+				std::memcpy(&command, commands.data() + offset, sizeof(command));
+				Require(command.cmdsize >= sizeof(command) && command.cmdsize <= commands.size() - offset,
+						"Invalid Mach-O runtime load-command size");
+				const auto readString = [&](std::uint32_t start, std::size_t minimum)
+				{
+					Require(start >= minimum && start < command.cmdsize, "Invalid Mach-O runtime string offset");
+					const auto first = commands.begin() + static_cast<std::ptrdiff_t>(offset + start);
+					const auto last = commands.begin() + static_cast<std::ptrdiff_t>(offset + command.cmdsize);
+					const auto end = std::find(first, last, '\0');
+					Require(end != last, "Unterminated Mach-O runtime string");
+					return std::string(first, end);
+				};
+				if (command.cmd == LC_LOAD_DYLIB || command.cmd == LC_LOAD_WEAK_DYLIB ||
+					command.cmd == LC_REEXPORT_DYLIB || command.cmd == LC_LOAD_UPWARD_DYLIB ||
+					command.cmd == LC_LAZY_LOAD_DYLIB)
+				{
+					Require(command.cmdsize >= sizeof(dylib_command), "Truncated Mach-O dylib command");
+					dylib_command library{};
+					std::memcpy(&library, commands.data() + offset, sizeof(library));
+					const auto name = readString(library.dylib.name.offset, sizeof(library));
+					if (name == "@rpath/libvulkan.1.dylib")
+					{
+						requiresVulkan = true;
+					}
+					else
+					{
+						Require(name.starts_with("/usr/lib/") || name.starts_with("/System/Library/"),
+								"Unsupported non-system runtime library; rebuild with portable dependencies: " + name);
+					}
+				}
+				else if (command.cmd == LC_RPATH)
+				{
+					Require(command.cmdsize >= sizeof(rpath_command), "Truncated Mach-O rpath command");
+					rpath_command path{};
+					std::memcpy(&path, commands.data() + offset, sizeof(path));
+					const auto value = readString(path.path.offset, sizeof(path));
+					hasBundleRPath = hasBundleRPath || value == "@executable_path/../Frameworks";
+					Require(value == "@executable_path/../Frameworks" ||
+								value == "@executable_path/AsterRuntimeDependencies",
+							"Runtime embeds a nonportable library search path: " + value);
+				}
+				offset += command.cmdsize;
+			}
+			Require(offset == commands.size(), "Mach-O runtime command count does not match its byte length");
+			Require(!requiresVulkan || hasBundleRPath,
+					"Graphical runtime lacks @executable_path/../Frameworks; rebuild with macOS export support");
+			return requiresVulkan;
+		}
+
+		void WriteMacInfo(const Path& contents)
+		{
+			std::ofstream plist(contents / "Info.plist", std::ios::binary);
+			plist.exceptions(std::ios::badbit | std::ios::failbit);
+			plist << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+					 "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
+					 "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+					 "<plist version=\"1.0\"><dict>\n"
+					 "<key>CFBundleExecutable</key><string>AsterGame</string>\n"
+					 "<key>CFBundleIdentifier</key><string>org.asterengine.exported-game</string>\n"
+					 "<key>CFBundleName</key><string>Aster Game</string>\n"
+					 "<key>CFBundlePackageType</key><string>APPL</string>\n"
+					 "<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>\n"
+					 "<key>CFBundleShortVersionString</key><string>1.0</string>\n"
+					 "<key>CFBundleVersion</key><string>1</string>\n"
+					 "<key>NSHighResolutionCapable</key><true/>\n"
+					 "</dict></plist>\n";
+			plist.close();
+		}
+#endif
 	} // namespace
 
 	std::filesystem::path ProjectExporter::Export(const ExportSettings& settings)
@@ -303,6 +435,32 @@ namespace Aster
 		Require((std::filesystem::status(runtime).permissions() & executePermissions) != std::filesystem::perms::none,
 				"Runtime file has no executable permission");
 #endif
+#ifdef __APPLE__
+		const bool hasVulkanBundle = RequiresVulkanBundle(runtime);
+		const auto companions = runtime.parent_path() / "AsterRuntimeDependencies";
+		Json moltenManifest;
+		if (hasVulkanBundle)
+		{
+			Require(std::filesystem::is_directory(companions) && !std::filesystem::is_symlink(companions),
+					"Graphical runtime requires its adjacent AsterRuntimeDependencies directory");
+			for (const char* name : {"libvulkan.1.dylib", "libMoltenVK.dylib"})
+			{
+				ValidateCompanion(companions / name, 256ULL * 1024ULL * 1024ULL);
+			}
+			ValidateCompanion(companions / "MoltenVK-LICENSE.txt", 1024 * 1024);
+			ValidateCompanion(companions / "MoltenVK_icd.json", 65536);
+			moltenManifest = ReadJson(companions / "MoltenVK_icd.json");
+			Require(moltenManifest.is_object() && moltenManifest.value("file_format_version", "") == "1.0.0" &&
+						moltenManifest.contains("ICD") && moltenManifest.at("ICD").is_object(),
+					"Invalid MoltenVK driver manifest");
+			auto& driver = moltenManifest.at("ICD");
+			Require(driver.value("is_portability_driver", false) && driver.contains("api_version") &&
+						driver.at("api_version").is_string() &&
+						IsSupportedDriverVersion(driver.at("api_version").get<std::string>()),
+					"MoltenVK manifest must describe a portability driver with a valid Vulkan version >= 1.3.0");
+			driver["library_path"] = "../../../Frameworks/libMoltenVK.dylib";
+		}
+#endif
 		const auto notices = std::filesystem::canonical(settings.ThirdPartyNotices);
 		Require(std::filesystem::is_directory(notices), "Third-party notices must be a directory");
 #if defined(_WIN32)
@@ -311,6 +469,14 @@ namespace Aster
 			Require(std::filesystem::is_regular_file(notices / "Licenses/vulkan_loader.txt") &&
 						std::filesystem::is_regular_file(notices / "Licenses/vulkan_loader_notices.txt"),
 					"Bundled vulkan-1.dll requires Vulkan loader license and permissive notices");
+		}
+#endif
+
+#ifdef __APPLE__
+		if (hasVulkanBundle)
+		{
+			ValidateCompanion(notices / "Licenses/vulkan_loader.txt", 1024 * 1024);
+			ValidateCompanion(notices / "Licenses/vulkan_loader_notices.txt", 1024 * 1024);
 		}
 #endif
 		const auto scenePath = ResolveFile(root, settings.ScenePath);
@@ -336,28 +502,56 @@ namespace Aster
 		bool removedEmptyDestination = false;
 		try
 		{
-			CopyFiles(assetFiles, staging / "Assets");
-			CopyFiles(noticeFiles, staging / "ThirdParty");
+			auto resources = staging;
+			auto binaries = staging;
+#ifdef __APPLE__
+			const auto contents = staging / "AsterGame.app/Contents";
+			resources = contents / "Resources";
+			binaries = contents / "MacOS";
+			std::filesystem::create_directories(binaries);
+			WriteMacInfo(contents);
+#endif
+			CopyFiles(assetFiles, resources / "Assets");
+			CopyFiles(noticeFiles, resources / "ThirdParty");
 #if defined(_WIN32)
 			const auto executableName = "AsterGame.exe";
 #else
 			const auto executableName = "AsterGame";
 #endif
-			std::filesystem::copy_file(runtime, staging / executableName);
+			std::filesystem::copy_file(runtime, binaries / executableName);
 #if defined(_WIN32)
 			if (hasVulkanLoader)
 			{
 				std::filesystem::copy_file(vulkanLoader, staging / "vulkan-1.dll");
 			}
 #endif
-			std::ofstream manifest(staging / "Game.json", std::ios::binary);
+#ifdef __APPLE__
+			if (hasVulkanBundle)
+			{
+				std::filesystem::create_directory(contents / "Frameworks");
+				for (const char* name : {"libvulkan.1.dylib", "libMoltenVK.dylib"})
+				{
+					std::filesystem::copy_file(companions / name, contents / "Frameworks" / name);
+				}
+				std::filesystem::copy_file(companions / "MoltenVK-LICENSE.txt",
+										   resources / "ThirdParty/Licenses/MoltenVK.txt",
+										   std::filesystem::copy_options::overwrite_existing);
+				const auto driverDirectory = resources / "vulkan/icd.d";
+				std::filesystem::create_directories(driverDirectory);
+				std::ofstream driver(driverDirectory / "MoltenVK_icd.json", std::ios::binary);
+				driver.exceptions(std::ios::badbit | std::ios::failbit);
+				driver << moltenManifest.dump(2) << '\n';
+				driver.close();
+			}
+#endif
+			std::ofstream manifest(resources / "Game.json", std::ios::binary);
 			manifest.exceptions(std::ios::badbit | std::ios::failbit);
 			manifest
 				<< Json({{"Version", 1}, {"Scene", settings.ScenePath.generic_string()}, {"Assets", "Assets"}}).dump(2)
 				<< '\n';
 			manifest.close();
 			// Revalidate the staged bytes, including all serialized file references.
-			ValidateFiles(staging / "Assets", CollectFiles(staging / "Assets"));
+			ValidateFiles(resources / "Assets", CollectFiles(resources / "Assets"));
 			Require(!std::filesystem::exists(output) ||
 						(std::filesystem::is_directory(output) && std::filesystem::is_empty(output)),
 					"Output directory changed during export");

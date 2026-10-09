@@ -5,8 +5,10 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import plistlib
 import shutil
 import subprocess
+import sys
 import tempfile
 
 
@@ -44,6 +46,24 @@ def digest_tree(directory):
     }
 
 
+def package_resources(package):
+    return package / "AsterGame.app/Contents/Resources" if sys.platform == "darwin" else package
+
+
+def package_executable(package):
+    if sys.platform == "darwin":
+        return package / "AsterGame.app/Contents/MacOS/AsterGame"
+    return package / ("AsterGame.exe" if os.name == "nt" else "AsterGame")
+
+
+def macos_shipping_environment():
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith(("DYLD_", "VK_", "MVK_")) and
+                   key not in ("VULKAN_SDK", "CMAKE_PREFIX_PATH")}
+    environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+    return environment
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--editor", type=Path, required=True)
@@ -66,9 +86,43 @@ def main():
         output.mkdir()  # An existing empty destination is supported.
         response = export(args.editor, args.runtime, args.notices, source, output)
         check(response["ok"], f"Export failed: {response}")
-        check(digest_tree(output / "Assets") == expected_assets, "Export changed or omitted asset bytes")
-        check(digest_tree(output / "ThirdParty") == digest_tree(args.notices), "Missing third-party notices")
-        manifest = json.loads((output / "Game.json").read_text())
+        resources = package_resources(output)
+        expected_notices = digest_tree(args.notices)
+        macos_vulkan = False
+        if sys.platform == "darwin":
+            contents = output / "AsterGame.app/Contents"
+            info = plistlib.loads((contents / "Info.plist").read_bytes())
+            check(info["CFBundleExecutable"] == "AsterGame" and info["CFBundlePackageType"] == "APPL",
+                  "Export did not produce an application bundle")
+            imports = subprocess.check_output(["/usr/bin/otool", "-L", str(args.runtime)], text=True)
+            macos_vulkan = "@rpath/libvulkan.1.dylib" in imports
+            if macos_vulkan:
+                companions = args.runtime.parent / "AsterRuntimeDependencies"
+                for name in ("libvulkan.1.dylib", "libMoltenVK.dylib"):
+                    library = contents / "Frameworks" / name
+                    check(library.read_bytes() == (companions / name).read_bytes(),
+                          f"Export omitted or changed macOS companion {name}")
+                    libraries = subprocess.check_output(["/usr/bin/otool", "-L", str(library)], text=True)
+                    for line in libraries.splitlines()[1:]:
+                        if not line[:1].isspace():
+                            continue  # A universal dylib prints a heading for each architecture.
+                        dependency = line.strip().split(" (", 1)[0]
+                        check(dependency.startswith(("@rpath/", "/usr/lib/", "/System/Library/")),
+                              f"Bundled library retains a development dependency: {dependency}")
+                license_bytes = (companions / "MoltenVK-LICENSE.txt").read_bytes()
+                expected_notices["Licenses/MoltenVK.txt"] = hashlib.sha256(license_bytes).hexdigest()
+                driver = json.loads((resources / "vulkan/icd.d/MoltenVK_icd.json").read_text())
+                check(driver["ICD"]["is_portability_driver"] is True and
+                      driver["ICD"]["library_path"] == "../../../Frameworks/libMoltenVK.dylib",
+                      "Bundled MoltenVK manifest is not portable")
+                load_commands = subprocess.check_output(["/usr/bin/otool", "-l", str(package_executable(output))], text=True)
+                check("path @executable_path/../Frameworks " in load_commands,
+                      "Exported runtime cannot locate its bundled libraries")
+            else:
+                check(not (contents / "Frameworks").exists(), "CPU-only bundle unexpectedly added graphics libraries")
+        check(digest_tree(resources / "Assets") == expected_assets, "Export changed or omitted asset bytes")
+        check(digest_tree(resources / "ThirdParty") == expected_notices, "Missing third-party notices")
+        manifest = json.loads((resources / "Game.json").read_text())
         check(manifest == {"Version": 1, "Scene": "Scenes/FeatureGallery.aster", "Assets": "Assets"},
               "Manifest must contain portable relative paths")
         check(not any(path.is_symlink() for path in output.rglob("*")), "Package contains source links")
@@ -90,7 +144,9 @@ def main():
         shutil.rmtree(source)
         elsewhere = root / "Elsewhere"
         elsewhere.mkdir()
-        executable = moved / ("AsterGame.exe" if os.name == "nt" else "AsterGame")
+        executable = package_executable(moved)
+        resources = package_resources(moved)
+        manifest_path = resources / "Game.json"
         state = elsewhere / "State.aster"
         process = subprocess.run(
             [str(executable), "--steps", "240", "--output", str(state)],
@@ -98,6 +154,7 @@ def main():
             text=True,
             capture_output=True,
             timeout=30,
+            env=macos_shipping_environment() if sys.platform == "darwin" else None,
         )
         check(process.returncode == 0, f"Relocated game failed: {process.stdout}\n{process.stderr}")
         result = json.loads(process.stdout)
@@ -122,7 +179,7 @@ def main():
               {"Static", "Kinematic", "Dynamic"}, "Feature scene must author every body type")
 
         if args.graphical:
-            shipping_environment = os.environ.copy()
+            shipping_environment = macos_shipping_environment() if sys.platform == "darwin" else os.environ.copy()
             for variable in ("LD_LIBRARY_PATH", "CMAKE_PREFIX_PATH", "VK_ADD_LAYER_PATH", "VK_INSTANCE_LAYERS",
                              "VK_LOADER_LAYERS_ENABLE"):
                 shipping_environment.pop(variable, None)
@@ -150,19 +207,32 @@ def main():
             check(json.loads(process.stdout)["errors"] == [], "Graphical validation run reported script errors")
 
         # Manifest failures must not silently fall back to the process cwd.
-        good_manifest = (moved / "Game.json").read_text()
+        good_manifest = manifest_path.read_text()
         for field, value in (("Version", 99), ("Assets", "../Elsewhere"), ("Scene", "../escape.aster")):
             invalid = json.loads(good_manifest)
             invalid[field] = value
-            (moved / "Game.json").write_text(json.dumps(invalid))
+            manifest_path.write_text(json.dumps(invalid))
             process = subprocess.run([str(executable), "--steps", "1"], cwd=elsewhere, text=True,
                                      capture_output=True, timeout=15)
             check(process.returncode != 0, f"Runtime accepted invalid manifest {field}")
-        (moved / "Game.json").write_text(good_manifest)
+        manifest_path.write_text(good_manifest)
+
+        if sys.platform == "darwin":
+            preserved_resources = root / "Preserved Resources"
+            resources.rename(preserved_resources)
+            resources.symlink_to(preserved_resources, target_is_directory=True)
+            try:
+                process = subprocess.run([str(executable), "--steps", "1"], cwd=elsewhere, text=True,
+                                         capture_output=True, timeout=15)
+                check(process.returncode != 0 and "Resources must not be a symbolic link" in process.stderr,
+                      "Runtime accepted a bundle Resources link escaping the application")
+            finally:
+                resources.unlink()
+                preserved_resources.rename(resources)
 
         external_assets = root / "External Assets"
         shutil.copytree(args.assets, external_assets)
-        assets_link = moved / "LinkedAssets"
+        assets_link = resources / "LinkedAssets"
         try:
             assets_link.symlink_to(external_assets, target_is_directory=True)
         except OSError as error:
@@ -172,23 +242,70 @@ def main():
         else:
             invalid = json.loads(good_manifest)
             invalid["Assets"] = "LinkedAssets"
-            (moved / "Game.json").write_text(json.dumps(invalid))
+            manifest_path.write_text(json.dumps(invalid))
             process = subprocess.run([str(executable), "--steps", "1"], cwd=elsewhere, text=True,
                                      capture_output=True, timeout=15)
             check(process.returncode != 0, "Runtime accepted assets symlink escaping package")
             assets_link.unlink()
-            scene_link = moved / "Assets/LinkedScene.aster"
+            scene_link = resources / "Assets/LinkedScene.aster"
             scene_link.symlink_to(external_assets / "Scenes/FeatureGallery.aster")
             invalid = json.loads(good_manifest)
             invalid["Scene"] = "LinkedScene.aster"
-            (moved / "Game.json").write_text(json.dumps(invalid))
+            manifest_path.write_text(json.dumps(invalid))
             process = subprocess.run([str(executable), "--steps", "1"], cwd=elsewhere, text=True,
                                      capture_output=True, timeout=15)
             check(process.returncode != 0, "Runtime accepted scene symlink escaping assets")
             scene_link.unlink()
-            (moved / "Game.json").write_text(good_manifest)
+            manifest_path.write_text(good_manifest)
 
         shutil.copytree(args.assets, source)
+        if sys.platform == "darwin":
+            runtime_fixture = root / "Mac Runtime Companion Failure"
+            runtime_fixture.mkdir()
+            fixture_executable = runtime_fixture / args.runtime.name
+            shutil.copy2(args.runtime, fixture_executable)
+            mac_failure = root / "Mac Failure"
+
+            def reject_mac_runtime(reason):
+                response = export(args.editor, fixture_executable, args.notices, source, mac_failure)
+                check(not response["ok"] and not mac_failure.exists(), f"Exporter accepted {reason}")
+                check(not list(root.glob("*.aster-export-*")), "Rejected macOS runtime left a staged export")
+
+            if macos_vulkan:
+                reject_mac_runtime("a graphical runtime without its companion directory")
+                fixture_companions = runtime_fixture / "AsterRuntimeDependencies"
+                shutil.copytree(args.runtime.parent / "AsterRuntimeDependencies", fixture_companions)
+                for name in ("libvulkan.1.dylib", "libMoltenVK.dylib", "MoltenVK-LICENSE.txt", "MoltenVK_icd.json"):
+                    companion = fixture_companions / name
+                    original = companion.read_bytes()
+                    companion.unlink()
+                    reject_mac_runtime(f"missing companion {name}")
+                    companion.write_bytes(b"")
+                    reject_mac_runtime(f"empty companion {name}")
+                    companion.unlink()
+                    companion.mkdir()
+                    reject_mac_runtime(f"directory companion {name}")
+                    companion.rmdir()
+                    companion.symlink_to(args.runtime.parent / "AsterRuntimeDependencies" / name)
+                    reject_mac_runtime(f"symbolic-link companion {name}")
+                    companion.unlink()
+                    companion.write_bytes(original)
+                driver_path = fixture_companions / "MoltenVK_icd.json"
+                original_driver = json.loads(driver_path.read_text())
+                for version in ("", None, 1.3, True, "1.2.999", "1.3", "1.3.0.0", "1..0", "-1.3.0",
+                                "1.3.0junk", "128.3.0", "1.1024.0", "1.3.4096"):
+                    invalid_driver = json.loads(json.dumps(original_driver))
+                    invalid_driver["ICD"]["api_version"] = version
+                    driver_path.write_text(json.dumps(invalid_driver))
+                    reject_mac_runtime(f"invalid driver API version {version!r}")
+                invalid_driver = json.loads(json.dumps(original_driver))
+                invalid_driver["file_format_version"] = "99.0.0"
+                driver_path.write_text(json.dumps(invalid_driver))
+                reject_mac_runtime("unsupported driver manifest format version")
+                driver_path.write_text('{"file_format_version":"1.0.0","ICD":{"is_portability_driver":false}}')
+                reject_mac_runtime("a malformed MoltenVK portability manifest")
+            fixture_executable.write_bytes(b"invalid Mach-O executable")
+            reject_mac_runtime("an invalid Mach-O runtime")
         if os.name == "nt":
             runtime_fixture = root / "Runtime Companion Failure"
             runtime_fixture.mkdir()

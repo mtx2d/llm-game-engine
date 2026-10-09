@@ -93,7 +93,19 @@ int main(int argc, char** argv)
 		if (scenePath.empty())
 		{
 			const auto executableDirectory = Aster::GetExecutablePath().parent_path();
-			const auto manifestPath = executableDirectory / "Game.json";
+			auto resourceDirectory = executableDirectory;
+#ifdef __APPLE__
+			if (executableDirectory.filename() == "MacOS" && executableDirectory.parent_path().filename() == "Contents")
+			{
+				const auto bundleResources = executableDirectory.parent_path() / "Resources";
+				if (std::filesystem::is_symlink(bundleResources))
+				{
+					throw std::invalid_argument("Application bundle Resources must not be a symbolic link");
+				}
+				resourceDirectory = std::filesystem::canonical(bundleResources);
+			}
+#endif
+			const auto manifestPath = resourceDirectory / "Game.json";
 			if (std::filesystem::exists(manifestPath) && std::filesystem::file_size(manifestPath) > 65536)
 			{
 				throw std::invalid_argument("Game manifest exceeds 64 KiB");
@@ -126,7 +138,7 @@ int main(int argc, char** argv)
 			}
 			if (!explicitProject)
 			{
-				projectRoot = executableDirectory / assets;
+				projectRoot = resourceDirectory / assets;
 			}
 			const auto contained = [](const std::filesystem::path& root, const std::filesystem::path& path)
 			{
@@ -142,8 +154,7 @@ int main(int argc, char** argv)
 			};
 			projectRoot = std::filesystem::canonical(projectRoot);
 			scenePath = std::filesystem::canonical(projectRoot / entryScene);
-			if ((!explicitProject && !contained(executableDirectory, projectRoot)) ||
-				!contained(projectRoot, scenePath))
+			if ((!explicitProject && !contained(resourceDirectory, projectRoot)) || !contained(projectRoot, scenePath))
 			{
 				throw std::invalid_argument("Game manifest path escapes its package");
 			}

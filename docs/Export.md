@@ -1,6 +1,6 @@
 # Runtime game packages
 
-The command editor exports the supplied platform's shipping runtime and the project's complete asset directory. Packages contain `AsterGame` (`AsterGame.exe` on Windows), `Game.json`, `Assets/`, and `ThirdParty/`. The runtime does not link the editor command or ImGui/ImGuizmo libraries, and no editor executable is copied.
+The command editor exports the supplied platform's shipping runtime and the project's complete asset directory. Linux and Windows packages contain `AsterGame` (`AsterGame.exe` on Windows), `Game.json`, `Assets/`, and `ThirdParty/`. macOS exports `AsterGame.app`, with the executable in `Contents/MacOS` and the manifest, assets, and notices in `Contents/Resources`. The runtime does not link the editor command or ImGui/ImGuizmo libraries, and no editor executable is copied.
 
 Send this JSON request to `AsterEditor --automation <asset-root>`, replacing the absolute paths:
 
@@ -16,7 +16,7 @@ Scene JSON persists `Environment` with `Path`, `Intensity`, and `Rotation`. The 
 
 ## Launch and validation
 
-The runtime reads `Game.json` beside its executable, independently of the working directory. The manifest contains only `Version`, the relative `Assets` directory, and the relative entry `Scene`. Manifest paths are validated after resolving symlinks.
+The runtime reads `Game.json` beside its executable, or from `Contents/Resources` in a macOS application bundle, independently of the working directory. The manifest contains only `Version`, the relative `Assets` directory, and the relative entry `Scene`. Manifest paths are validated after resolving symlinks; a macOS bundle's Resources directory cannot itself be a symbolic link.
 
 ```sh
 # Deterministic headless simulation; optional state output.
@@ -27,6 +27,9 @@ The runtime reads `Game.json` beside its executable, independently of the workin
 
 # Bounded graphical run for integration testing.
 ./AsterGame --window --steps 120 --validation
+
+# The equivalent executable inside a macOS export.
+./AsterGame.app/Contents/MacOS/AsterGame --steps 240
 ```
 
 Explicit `--steps` chooses headless operation unless `--window` is supplied. Graphical builds without `--steps` use the actual window/render loop and device audio. Headless and bounded runs use offline audio. A CPU-only runtime rejects `--window`. Shipping launches do not require development validation layers; `--validation` explicitly enables Vulkan/NVRHI diagnostics and requires an installed Vulkan validation layer. The relocated Linux package passed a five-frame native-window run with development library paths removed and validation layers unavailable, followed by an explicit validation run. Supported-platform release, device-audio, and full gameplay checks remain separate gates.
@@ -42,8 +45,10 @@ The test copies the package, removes the original source assets, starts from a d
 
 ## Distribution limits
 
-Export packages the architecture and operating system of the supplied runtime; it does not cross-compile or bundle system dependencies. Linux retains its C/C++ runtime, window-system, and Vulkan-loader/driver requirements. Graphical execution requires a compatible Vulkan implementation; macOS requires a working MoltenVK integration. Device audio needs a supported operating-system audio backend.
+Export packages the architecture and operating system of the supplied runtime; it does not cross-compile or bundle system dependencies. Linux retains its C/C++ runtime, window-system, and Vulkan-loader/driver requirements. Graphical execution requires a compatible Vulkan implementation. Device audio needs a supported operating-system audio backend.
 
 On Windows, an adjacent `vulkan-1.dll` supplied with the selected runtime is copied into the package along with its preserved loader license. Directories, symbolic links, empty files, and oversized loader files are rejected. If no companion loader exists, the package uses the system Vulkan loader. The graphics driver and Microsoft C++ runtime remain platform prerequisites; use a Release build for distribution. SwiftShader is used only for CI and is not bundled into games.
 
-Relocated Linux headless, graphical, and keyboard-driven gameplay tests have passed in debug and release. Native Windows/macOS CPU CI also passed relocated headless launches. Windows/macOS graphical packages and native input, device audio, dependency deployment, platform signing, and self-contained macOS application packaging remain unfinished acceptance gates. See `ImplementationStatus.md` for the complete specification and current evidence.
+Graphical macOS builds stage the verified Vulkan loader, MoltenVK library, driver manifest, and license beside `AsterRuntime` in `AsterRuntimeDependencies`. Export inspects the actual Mach-O imports and library search paths, copies the libraries into `Contents/Frameworks`, and rewrites the bundled driver manifest to use its relative library path. Missing, empty, oversized, or symbolic-link companions and malformed driver versions fail export. Only native 64-bit Mach-O runtime executables are accepted; universal runtime executables are currently rejected. The libraries retain their upstream bytes and licenses. Export does not sign or notarize the application. A CPU-only macOS package omits the graphics libraries.
+
+Relocated Linux headless, graphical, and keyboard-driven gameplay tests have passed in debug and release. Native Windows/macOS CPU CI also passed relocated headless launches before the new macOS bundle layout. The new bundle and Windows input checks await native CI execution. Windows/macOS graphical packages and native input, device audio, dependency deployment, and platform signing remain unfinished acceptance gates. See `ImplementationStatus.md` for the complete specification and current evidence.

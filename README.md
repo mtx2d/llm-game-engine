@@ -43,7 +43,7 @@ cmake --build --preset debug --parallel 4
 ctest --preset debug -R AssetCorpus
 ```
 
-Native Windows and macOS CPU suites pass CI. Graphics validation uses `scripts/SetupWindowsVulkan.ps1` on Windows and `scripts/BootstrapMacOS.sh` on macOS; both fetch verified toolchains into `build/`. The Windows CI driver is SwiftShader software Vulkan. The macOS toolchain uses MoltenVK and requires an actual Metal-capable device. These scripts prepare dependencies; platform graphics and shipping support require the executable checks recorded in the implementation status.
+Native Windows and macOS CPU suites pass CI. Linux Vulkan CI also passes all 15 integrated tests and the separate GLFW presentation check. Graphics validation uses `scripts/SetupWindowsVulkan.ps1` on Windows and `scripts/BootstrapMacOS.sh` on macOS; both fetch verified toolchains into `build/`. Run Windows setup in a non-elevated PowerShell 7 shell; its automatic driver registration is restricted to ephemeral GitHub-hosted runners. The Windows CI driver is SwiftShader software Vulkan. The macOS toolchain uses MoltenVK and requires a Metal-capable device. Native macOS foundation GPU checks passed on Apple's paravirtual device; scene rendering and the new `.app` export still require the corrected CI run. These scripts prepare dependencies; platform graphics and shipping support require the executable checks recorded in the implementation status.
 
 ## Development
 

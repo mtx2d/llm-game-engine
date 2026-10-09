@@ -11,7 +11,19 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if (-not $IsWindows) { throw 'SetupWindowsVulkan.ps1 requires native Windows PowerShell 7.' }
+if (-not [Environment]::Is64BitProcess) { throw 'SetupWindowsVulkan.ps1 requires a 64-bit PowerShell process.' }
 if ($Parallel -lt 1 -or $Parallel -gt 16) { throw 'Parallel must be in [1,16].' }
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+try
+{
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    $isElevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+finally { $identity.Dispose() }
+if ($isElevated -and ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted'))
+{
+    throw 'Run this setup in a non-elevated shell. Automatic Vulkan registry registration is limited to ephemeral GitHub-hosted runners.'
+}
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $buildDirectory = [IO.Path]::GetFullPath($BuildRoot)
 $allowedPrefix = [IO.Path]::GetFullPath((Join-Path $repositoryRoot 'build')) + [IO.Path]::DirectorySeparatorChar
@@ -129,6 +141,31 @@ Set-ProcessAndActionsEnvironment 'VK_DRIVER_FILES' $icdManifest
 Set-ProcessAndActionsEnvironment 'VK_ICD_FILENAMES' $icdManifest
 Set-ProcessAndActionsEnvironment 'ASTER_VULKAN_LOADER' $loaders[0].FullName
 Set-ProcessAndActionsEnvironment 'ASTER_VULKAN_EVIDENCE' $evidenceDirectory
+# Elevated applications ignore driver/layer environment overrides by design.
+# Use the loader's documented machine registration only on the disposable hosted
+# runner. Add our exact manifest values without replacing any other entries.
+# https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderDriverInterface.md#exception-for-elevated-privileges
+$registrations = @()
+if ($isElevated)
+{
+    $registrations = @(
+        @{ Key = 'HKLM:\SOFTWARE\Khronos\Vulkan\Drivers'; Manifest = $icdManifest },
+        @{ Key = 'HKLM:\SOFTWARE\Khronos\Vulkan\ExplicitLayers'; Manifest = (Join-Path $sdkDirectory 'Bin/VkLayer_khronos_validation.json') }
+    )
+    foreach ($registration in $registrations)
+    {
+        if (-not (Test-Path -LiteralPath $registration.Manifest -PathType Leaf))
+        {
+            throw "Vulkan registry manifest is missing: $($registration.Manifest)"
+        }
+        if (-not (Test-Path -LiteralPath $registration.Key))
+        {
+            New-Item -Path $registration.Key -Force | Out-Null
+        }
+        New-ItemProperty -LiteralPath $registration.Key -Name $registration.Manifest -PropertyType DWord -Value 0 -Force | Out-Null
+        Write-Host "Registered Vulkan manifest $($registration.Manifest) at $($registration.Key)"
+    }
+}
 # Never add SwiftShader's directory to PATH: it contains a drop-in vulkan-1.dll
 # that bypasses the Vulkan loader and would prevent validation layer loading.
 foreach ($directory in @((Join-Path $sdkDirectory 'Bin'), $loaderDirectory))
@@ -140,12 +177,23 @@ $informationTools = @('vulkaninfoSDK.exe', 'vulkaninfo.exe') | ForEach-Object { 
     Where-Object { Test-Path -LiteralPath $_ }
 if (@($informationTools).Count -eq 0) { throw 'The SDK contains no Vulkan device information executable.' }
 $informationTool = @($informationTools)[0]
-& $informationTool '--summary' 2>&1 | Tee-Object -FilePath (Join-Path $evidenceDirectory 'VulkanInfo.txt')
-if ($LASTEXITCODE -ne 0) { throw "Vulkan device enumeration failed: $LASTEXITCODE" }
+# Select the verified loader beside the executable, ahead of a runner image's
+# system loader. Keep the same application-local arrangement used by Aster.
+Copy-Item -LiteralPath $loaders[0].FullName -Destination (Join-Path $sdkDirectory 'Bin/vulkan-1.dll') -Force
 @{
     SdkVersion = $sdkVersion; SdkSha256 = $sdkHash; RuntimeSha256 = $runtimeHash
     SwiftShaderRevision = $swiftRevision; SwiftShaderSha256 = $swiftHash
     IcdManifest = $icdManifest; IcdLibrary = $icdLibrary; Loader = $loaders[0].FullName
+    Elevated = $isElevated; RegistryEntries = $registrations
     Note = 'Software Vulkan on native Windows; renderer execution and validation are separate required gates.'
-} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidenceDirectory 'Dependencies.json')
+} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $evidenceDirectory 'Dependencies.json')
+$previousLoaderDebug = [Environment]::GetEnvironmentVariable('VK_LOADER_DEBUG', 'Process')
+try
+{
+    $env:VK_LOADER_DEBUG = 'error,warn,driver'
+    & $informationTool '--summary' 2>&1 | Tee-Object -FilePath (Join-Path $evidenceDirectory 'VulkanInfo.txt')
+    $enumerationExitCode = $LASTEXITCODE
+}
+finally { [Environment]::SetEnvironmentVariable('VK_LOADER_DEBUG', $previousLoaderDebug, 'Process') }
+if ($enumerationExitCode -ne 0) { throw "Vulkan device enumeration failed: $enumerationExitCode" }
 Write-Host 'Windows Vulkan dependencies are prepared. Run the renderer tests with validation before claiming support.'

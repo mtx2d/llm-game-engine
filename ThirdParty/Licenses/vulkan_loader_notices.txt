@@ -1,5 +1,9 @@
 Vulkan-Loader permissive source notices
 Official source revision: 0a278cc725089cb67bf6027076e5d72f97c04d86
+The same verbatim notices also cover macOS loader revision:
+ebc06b83174f6b5200eb21de3e83fc0d03ddcd18
+Official source: https://github.com/KhronosGroup/Vulkan-Loader
+macOS archive SHA256: adbbf3460816cc8a4976713826c2aa0543b277049650f610c4217693fe3d4371
 
 Files: loader/cJSON.c, loader/cJSON.h
 

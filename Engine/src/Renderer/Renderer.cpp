@@ -886,7 +886,8 @@ namespace Aster
 				features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
 				features.pNext = &features12;
 				vkGetPhysicalDeviceFeatures2(physicalDevice, &features);
-				if (!features12.timelineSemaphore || !features13.synchronization2 || !features13.dynamicRendering)
+				if (!features12.timelineSemaphore || !features13.synchronization2 || !features13.dynamicRendering ||
+					!features13.shaderDemoteToHelperInvocation)
 				{
 					continue;
 				}
@@ -945,7 +946,7 @@ namespace Aster
 			{
 				throw std::runtime_error(
 					"No matching Vulkan 1.3 device supports graphics, timeline semaphores, dynamic rendering, "
-					"synchronization2, and requested presentation; requested device: " +
+					"synchronization2, fragment demotion, and requested presentation; requested device: " +
 					(m_Options.DeviceName.empty() ? std::string("automatic selection") : m_Options.DeviceName));
 			}
 			const float priority = 1.0f;
@@ -958,6 +959,9 @@ namespace Aster
 			features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
 			features13.synchronization2 = VK_TRUE;
 			features13.dynamicRendering = VK_TRUE;
+			// Vulkan 1.3 glslang emits fragment demotion for alpha-mask discard.
+			// Core feature support is mandatory, but device use must still be enabled.
+			features13.shaderDemoteToHelperInvocation = VK_TRUE;
 			VkPhysicalDeviceVulkan12Features features12{};
 			features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
 			features12.pNext = &features13;

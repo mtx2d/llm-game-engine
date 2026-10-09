@@ -2,11 +2,12 @@
 
 import argparse
 import json
-import os
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+
+from ExportTests import package_executable
 
 
 def check(condition, message):
@@ -158,7 +159,7 @@ def main():
         relocated = root / "Moved BlockStack"
         package.rename(relocated)
         shutil.rmtree(source)
-        executable = relocated / ("AsterGame.exe" if os.name == "nt" else "AsterGame")
+        executable = package_executable(relocated)
         process = subprocess.run([str(executable), "--steps", "90"], cwd=root, capture_output=True,
                                  text=True, timeout=30)
         check(process.returncode == 0, f"Exported BlockStack failed: {process.stdout}\n{process.stderr}")
