@@ -1,6 +1,6 @@
 # Aster
 
-A native C++20 3D game engine built from [GameEngineDoc.md](GameEngineDoc.md). Automated software acceptance has passed on Windows, macOS and Ubuntu; Windows native editor test repeatability and hardware audio validation remain open. The complete release requirements, evidence and limitations are tracked in [ImplementationStatus.md](docs/ImplementationStatus.md).
+A native C++20 3D game engine built from [GameEngineDoc.md](GameEngineDoc.md). Automated software acceptance passes on Windows, macOS and Ubuntu; Windows and Ubuntu hardware audio validation remain open. The complete release requirements, evidence and limitations are tracked in [ImplementationStatus.md](docs/ImplementationStatus.md).
 
 The implementation includes a scene library, Lua/Bullet/miniaudio simulation, a native graphical editor with transform gizmos, a JSON command interface, and a separate shipping runtime. The GLFW/NVRHI Vulkan renderer imports glTF materials and textures, renders PBR lighting into HDR, processes Poly Haven HDRIs for image-based lighting, and adds soft shadow maps and SSAO. These rendering features have automated GPU image checks. Game export produces a relocatable asset package and runtime. Remaining quality, platform, and release gates are tracked in the implementation status.
 
@@ -67,4 +67,4 @@ Graphics validation uses `scripts/SetupWindowsVulkan.ps1` on Windows and `script
 
 Follow [AGENTS.md](AGENTS.md) and repository workflows in `skills/`. Review and test changes before committing. Third-party revisions and archive hashes are in `cmake/Dependencies.lock.json`. Engine code follows Hazel naming conventions.
 
-Windows/Ubuntu hardware audio and Windows native editor test repeatability are the remaining release acceptance checks. The workspace exposes only virtual output, and hosted Windows/Linux runners have no audio backend. macOS device-clock playback passed in CI, and the user separately reported successful manual macOS listening. See the implementation status for the intermittent editor test failure, complete evidence and supported-domain limits.
+Windows/Ubuntu hardware audio is the remaining release acceptance check. The workspace exposes only virtual output, and hosted Windows/Linux runners have no audio backend. macOS device-clock playback passed in CI, and the user separately reported successful manual macOS listening. See the implementation status for the corrected Windows editor synchronization, consecutive native test passes, complete evidence and supported-domain limits.
