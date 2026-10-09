@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Darwin
 import Foundation
 
@@ -75,40 +76,39 @@ final class EditorInput
 		return actual
 	}
 
-	func RouteMouse(_ event: CGEvent) throws -> Int
+	func RequireOwnedPoint() throws -> UInt32
 	{
-		guard let window = game.window else { throw TestFailure(description: "No owned editor window for mouse routing") }
-		let identifier = Int64(window.windowID)
-		// PID delivery alone does not select an AppKit window. Use the public
-		// mouse-routing fields and inspect AppKit's interpretation before posting.
-		event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: identifier)
-		event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: identifier)
-		guard let cocoa = NSEvent(cgEvent: event) else
+		try game.CheckFocused()
+		guard let window = game.window, let ownedWindow = game.accessibilityWindow else
 		{
-			throw TestFailure(description: "Cannot inspect the constructed native mouse event")
+			throw TestFailure(description: "No owned editor window for pointer hit-testing")
 		}
-		try Require(cocoa.windowNumber == Int(window.windowID),
-			"Native mouse event did not resolve to its owned window: expected \(window.windowID), observed \(cocoa.windowNumber)")
-		return cocoa.windowNumber
+		// A system-wide hit test uses the actual screen z-order. Restricting this
+		// query to our application could overlook a different app covering it.
+		var hit: AXUIElement?
+		try RequireAX(AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(),
+			Float(pointer.x), Float(pointer.y), &hit), "Hit-test native pointer target")
+		guard let hit else { throw TestFailure(description: "Native pointer target has no accessibility element") }
+		try Require(try Owner(hit) == game.pid, "Native pointer target is covered by another process")
+		let hitWindow: AXUIElement
+		if CFEqual(hit, ownedWindow) { hitWindow = hit }
+		else { hitWindow = try ElementAttribute(hit, kAXWindowAttribute) }
+		try Require(try Owner(hitWindow) == game.pid && CFEqual(hitWindow, ownedWindow),
+			"Native pointer target belongs to another window")
+		return window.windowID
 	}
 
-	func MakeMouse(_ type: NSEvent.EventType) throws -> CGEvent
+	func MakeMouse(_ type: CGEventType) throws -> CGEvent
 	{
-		guard let window = game.window else { throw TestFailure(description: "No owned editor window for mouse creation") }
-		// AppKit's factory supplies the actual window identity that the public
-		// under-pointer CGEvent fields alone do not establish. Its input location
-		// is window-local bottom-left; Quartz posting uses global top-left.
-		let local = NSPoint(x: pointer.x - window.frame.minX - client.minX,
-			y: client.height - (pointer.y - window.frame.minY - client.minY))
-		let pressure: Float = type == .leftMouseDown || type == .leftMouseDragged ? 1 : 0
-		guard let cocoa = NSEvent.mouseEvent(with: type, location: local, modifierFlags: [],
-			timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: Int(window.windowID), context: nil,
-			eventNumber: mouseEventNumber, clickCount: 1, pressure: pressure), let event = cocoa.cgEvent else
+		guard let event = CGEvent(mouseEventSource: source, mouseType: type,
+			mouseCursorPosition: pointer, mouseButton: .left) else
 		{
-			throw TestFailure(description: "Cannot create an AppKit mouse event for the owned editor window")
+			throw TestFailure(description: "Cannot create a native editor mouse event")
 		}
-		event.location = pointer
 		event.flags = []
+		event.setIntegerValueField(.mouseEventClickState, value: 1)
+		event.setIntegerValueField(.mouseEventNumber, value: Int64(mouseEventNumber))
+		event.setDoubleValueField(.mouseEventPressure, value: type == .leftMouseDown || type == .leftMouseDragged ? 1 : 0)
 		return event
 	}
 
@@ -120,7 +120,7 @@ final class EditorInput
 		guard let window = game.window else { throw TestFailure(description: "No owned editor window") }
 		pointer = CGPoint(x: window.frame.minX + client.minX + CGFloat(x),
 			y: window.frame.minY + client.minY + CGFloat(y))
-		let type: NSEvent.EventType
+		let type: CGEventType
 		switch action
 		{
 		case "move": type = leftDown ? .leftMouseDragged : .mouseMoved
@@ -133,27 +133,27 @@ final class EditorInput
 			type = .leftMouseUp
 		default: throw TestFailure(description: "Unknown native mouse operation")
 		}
-		// PID-directed events do not establish the physical pointer position.
-		// ImGui's GLFW fallback polls Cocoa mouseLocationOutsideOfEventStream,
-		// so keep that position consistent with the event's owned-client point.
-		// This warp generates no events; the mouse event below still targets PID.
+		// ImGui's GLFW fallback polls Cocoa mouseLocationOutsideOfEventStream.
+		// Place and check the physical cursor before native WindowServer routing.
 		let before = try CursorPosition()
 		let warp = CGWarpMouseCursorPosition(pointer)
 		try Require(warp == .success, "Cannot move the native cursor to its owned-client target: \(warp.rawValue)")
 		_ = try RequireCursor(at: pointer)
-		try game.CheckFocused()
+		let hitWindow = try RequireOwnedPoint()
 		let event = try MakeMouse(type)
-		let eventWindow = try RouteMouse(event)
-		event.postToPid(game.pid)
+		// Mouse events enter the ordinary foreground HID path only after the
+		// focus, actual cursor and topmost owned-window checks all succeed.
+		event.post(tap: .cghidEventTap)
 		eventsPosted += 1
 		if action == "down" { leftDown = true }
 		if action == "up" { leftDown = false }
 		try await Settle()
 		let after = try RequireCursor(at: pointer)
+		_ = try RequireOwnedPoint()
 		return ["before_x": Double(before.x), "before_y": Double(before.y),
 			"target_x": Double(pointer.x), "target_y": Double(pointer.y),
-			"after_x": Double(after.x), "after_y": Double(after.y), "event_window_id": eventWindow,
-			"window_local_x": x, "window_local_y": Double(client.height) - y,
+			"after_x": Double(after.x), "after_y": Double(after.y), "hit_window_id": hitWindow,
+			"posting_scope": "foreground_hid", "client_x": x, "client_y": y,
 			"mouse_event_number": mouseEventNumber]
 	}
 
@@ -232,13 +232,15 @@ final class EditorInput
 	func ReleaseHeldInput() throws
 	{
 		try game.CheckAlive()
-		// Cleanup releases target only the PID that received the original presses.
-		// They never activate a different app or enter the global event stream.
+		// Release only controls pressed by this helper. A foreground mouse release
+		// requires the same focused owned point; keyboard releases remain PID-only.
 		if leftDown
 		{
+			try GuardInput()
+			_ = try RequireCursor(at: pointer)
+			_ = try RequireOwnedPoint()
 			let event = try MakeMouse(.leftMouseUp)
-			_ = try RouteMouse(event)
-			event.postToPid(game.pid)
+			event.post(tap: .cghidEventTap)
 			leftDown = false
 		}
 		for code in [keyDown, commandDown ? CGKeyCode(55) : nil].compactMap({ $0 })
