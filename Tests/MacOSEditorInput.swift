@@ -13,6 +13,7 @@ final class EditorInput
 	var commandDown = false
 	var keyDown: CGKeyCode?
 	var eventsPosted = 0
+	var mouseEventNumber = 0
 
 	init(game: GameWindow) throws
 	{
@@ -91,6 +92,26 @@ final class EditorInput
 		return cocoa.windowNumber
 	}
 
+	func MakeMouse(_ type: NSEvent.EventType) throws -> CGEvent
+	{
+		guard let window = game.window else { throw TestFailure(description: "No owned editor window for mouse creation") }
+		// AppKit's factory supplies the actual window identity that the public
+		// under-pointer CGEvent fields alone do not establish. Its input location
+		// is window-local bottom-left; Quartz posting uses global top-left.
+		let local = NSPoint(x: pointer.x - window.frame.minX - client.minX,
+			y: client.height - (pointer.y - window.frame.minY - client.minY))
+		let pressure: Float = type == .leftMouseDown || type == .leftMouseDragged ? 1 : 0
+		guard let cocoa = NSEvent.mouseEvent(with: type, location: local, modifierFlags: [],
+			timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: Int(window.windowID), context: nil,
+			eventNumber: mouseEventNumber, clickCount: 1, pressure: pressure), let event = cocoa.cgEvent else
+		{
+			throw TestFailure(description: "Cannot create an AppKit mouse event for the owned editor window")
+		}
+		event.location = pointer
+		event.flags = []
+		return event
+	}
+
 	func Mouse(_ action: String, x: Double, y: Double) async throws -> [String: Any]
 	{
 		try GuardInput()
@@ -99,12 +120,13 @@ final class EditorInput
 		guard let window = game.window else { throw TestFailure(description: "No owned editor window") }
 		pointer = CGPoint(x: window.frame.minX + client.minX + CGFloat(x),
 			y: window.frame.minY + client.minY + CGFloat(y))
-		let type: CGEventType
+		let type: NSEvent.EventType
 		switch action
 		{
 		case "move": type = leftDown ? .leftMouseDragged : .mouseMoved
 		case "down":
 			try Require(!leftDown, "Native mouse button is already down")
+			mouseEventNumber += 1
 			type = .leftMouseDown
 		case "up":
 			try Require(leftDown, "Native mouse button was not pressed")
@@ -120,13 +142,7 @@ final class EditorInput
 		try Require(warp == .success, "Cannot move the native cursor to its owned-client target: \(warp.rawValue)")
 		_ = try RequireCursor(at: pointer)
 		try game.CheckFocused()
-		guard let event = CGEvent(mouseEventSource: source, mouseType: type,
-			mouseCursorPosition: pointer, mouseButton: .left) else
-		{
-			throw TestFailure(description: "Cannot create native editor pointer event")
-		}
-		event.flags = []
-		event.setIntegerValueField(.mouseEventClickState, value: 1)
+		let event = try MakeMouse(type)
 		let eventWindow = try RouteMouse(event)
 		event.postToPid(game.pid)
 		eventsPosted += 1
@@ -136,7 +152,9 @@ final class EditorInput
 		let after = try RequireCursor(at: pointer)
 		return ["before_x": Double(before.x), "before_y": Double(before.y),
 			"target_x": Double(pointer.x), "target_y": Double(pointer.y),
-			"after_x": Double(after.x), "after_y": Double(after.y), "event_window_id": eventWindow]
+			"after_x": Double(after.x), "after_y": Double(after.y), "event_window_id": eventWindow,
+			"window_local_x": x, "window_local_y": Double(client.height) - y,
+			"mouse_event_number": mouseEventNumber]
 	}
 
 	func Key(_ key: String, down: Bool) async throws
@@ -218,11 +236,7 @@ final class EditorInput
 		// They never activate a different app or enter the global event stream.
 		if leftDown
 		{
-			guard let event = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp,
-				mouseCursorPosition: pointer, mouseButton: .left) else
-			{
-				throw TestFailure(description: "Cannot release owned mouse button")
-			}
+			let event = try MakeMouse(.leftMouseUp)
 			_ = try RouteMouse(event)
 			event.postToPid(game.pid)
 			leftDown = false
