@@ -74,7 +74,24 @@ final class EditorInput
 		return actual
 	}
 
-	func Mouse(_ action: String, x: Double, y: Double) async throws -> [String: Double]
+	func RouteMouse(_ event: CGEvent) throws -> Int
+	{
+		guard let window = game.window else { throw TestFailure(description: "No owned editor window for mouse routing") }
+		let identifier = Int64(window.windowID)
+		// PID delivery alone does not select an AppKit window. Use the public
+		// mouse-routing fields and inspect AppKit's interpretation before posting.
+		event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: identifier)
+		event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: identifier)
+		guard let cocoa = NSEvent(cgEvent: event) else
+		{
+			throw TestFailure(description: "Cannot inspect the constructed native mouse event")
+		}
+		try Require(cocoa.windowNumber == Int(window.windowID),
+			"Native mouse event did not resolve to its owned window: expected \(window.windowID), observed \(cocoa.windowNumber)")
+		return cocoa.windowNumber
+	}
+
+	func Mouse(_ action: String, x: Double, y: Double) async throws -> [String: Any]
 	{
 		try GuardInput()
 		try Require(x.isFinite && y.isFinite && x >= 0 && y >= 0 && x < Double(client.width) && y < Double(client.height),
@@ -110,6 +127,7 @@ final class EditorInput
 		}
 		event.flags = []
 		event.setIntegerValueField(.mouseEventClickState, value: 1)
+		let eventWindow = try RouteMouse(event)
 		event.postToPid(game.pid)
 		eventsPosted += 1
 		if action == "down" { leftDown = true }
@@ -118,7 +136,7 @@ final class EditorInput
 		let after = try RequireCursor(at: pointer)
 		return ["before_x": Double(before.x), "before_y": Double(before.y),
 			"target_x": Double(pointer.x), "target_y": Double(pointer.y),
-			"after_x": Double(after.x), "after_y": Double(after.y)]
+			"after_x": Double(after.x), "after_y": Double(after.y), "event_window_id": eventWindow]
 	}
 
 	func Key(_ key: String, down: Bool) async throws
@@ -205,6 +223,7 @@ final class EditorInput
 			{
 				throw TestFailure(description: "Cannot release owned mouse button")
 			}
+			_ = try RouteMouse(event)
 			event.postToPid(game.pid)
 			leftDown = false
 		}
