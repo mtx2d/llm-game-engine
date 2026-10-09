@@ -17,6 +17,7 @@
 #include <limits>
 #include <stdexcept>
 #include <thread>
+#include <utility>
 
 namespace
 {
@@ -72,6 +73,27 @@ namespace
 			}
 			throw std::runtime_error(diagnostic);
 		}
+	}
+
+	std::pair<uint32_t, uint32_t> RequireFramebufferSize(const Aster::Renderer& renderer, uint32_t width,
+														 uint32_t height)
+	{
+		if (auto* window = static_cast<GLFWwindow*>(renderer.GetNativeWindow()))
+		{
+			// Window managers may constrain the requested logical size; Vulkan
+			// targets must follow the actual framebuffer, including DPI scaling.
+			int framebufferWidth = 0;
+			int framebufferHeight = 0;
+			glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+			Require(framebufferWidth > 0 && framebufferHeight > 0, "Native framebuffer has no drawable extent");
+			std::cout << "Requested " << width << 'x' << height << ", native framebuffer " << framebufferWidth << 'x'
+					  << framebufferHeight << '\n';
+			width = static_cast<uint32_t>(framebufferWidth);
+			height = static_cast<uint32_t>(framebufferHeight);
+		}
+		Require(renderer.GetWidth() == width && renderer.GetHeight() == height,
+				"Render target dimensions differ from the required framebuffer dimensions");
+		return {width, height};
 	}
 
 	void TestNativeWindowLifecycle(Aster::Renderer& renderer)
@@ -184,6 +206,7 @@ void RunRendererTests()
 	RequireThrows<std::runtime_error>([&]() { Aster::Renderer unavailable(unavailableDevice); },
 									  "Unavailable GPU was accepted");
 	Aster::Renderer renderer(options);
+	RequireFramebufferSize(renderer, options.Width, options.Height);
 	RequireThrows<std::logic_error>([&]() { Aster::Renderer duplicate(options); },
 									"A second active Vulkan dispatcher was accepted");
 	if (!options.Headless)
@@ -282,12 +305,12 @@ void RunRendererTests()
 	RequireClean(renderer);
 
 	renderer.Resize(61, 17);
-	Require(renderer.GetWidth() == 61 && renderer.GetHeight() == 17, "Resize did not update render target dimensions");
+	const auto [resizedWidth, resizedHeight] = RequireFramebufferSize(renderer, 61, 17);
 	RequireThrows<std::logic_error>([&]() { renderer.ReadbackRgba8(); }, "Resize retained stale frame contents");
 	const std::array<float, 4> resizedColor{0.5f, 0.125f, 0.75f, 1};
 	renderer.RenderFrame(resizedColor);
-	RequireColor(renderer.ReadbackRgba8(), 61, 17, resizedColor);
-	RequireColor(renderer.ReadbackRgba8(), 61, 17, resizedColor);
+	RequireColor(renderer.ReadbackRgba8(), resizedWidth, resizedHeight, resizedColor);
+	RequireColor(renderer.ReadbackRgba8(), resizedWidth, resizedHeight, resizedColor);
 	RequireClean(renderer);
 	if (!options.Headless)
 	{
@@ -304,7 +327,8 @@ void RunRendererTests()
 	secondOptions.Height = 13;
 	Aster::Renderer second(secondOptions);
 	second.RenderFrame(resizedColor);
-	RequireColor(second.ReadbackRgba8(), 11, 13, resizedColor);
+	const auto [secondWidth, secondHeight] = RequireFramebufferSize(second, 11, 13);
+	RequireColor(second.ReadbackRgba8(), secondWidth, secondHeight, resizedColor);
 	second.Shutdown();
 	RequireClean(second);
 	std::cout << "Validated frame readback, resize, thread ownership, and shutdown\n";

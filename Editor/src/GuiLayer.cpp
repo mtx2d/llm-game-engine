@@ -669,6 +669,10 @@ namespace Aster
 																		   : environment.Path.c_str());
 			if (!environment.Path.empty())
 			{
+				const float environmentFieldWidth =
+					std::max(40.0f, ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("Sky rotation (radians)").x -
+										ImGui::GetStyle().ItemInnerSpacing.x);
+				ImGui::SetNextItemWidth(environmentFieldWidth);
 				if (ImGui::DragFloat("Sky intensity", &environment.Intensity, 0.01f, 0.0f, 100.0f))
 				{
 					if (ImGui::IsItemActive())
@@ -678,6 +682,7 @@ namespace Aster
 					Execute(
 						{{"command", "scene.environment"}, {"environment", {{"Intensity", environment.Intensity}}}});
 				}
+				ImGui::SetNextItemWidth(environmentFieldWidth);
 				if (ImGui::DragFloat("Sky rotation (radians)", &environment.Rotation, 0.01f))
 				{
 					if (ImGui::IsItemActive())

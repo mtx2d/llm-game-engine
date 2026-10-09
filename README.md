@@ -45,10 +45,10 @@ cmake --build --preset debug --parallel 4
 ctest --preset debug -R AssetCorpus
 ```
 
-Native Windows and macOS CPU suites pass CI. Linux Vulkan CI passes its integrated tests and separate GLFW presentation check. Graphics validation uses `scripts/SetupWindowsVulkan.ps1` on Windows and `scripts/BootstrapMacOS.sh` on macOS; both fetch verified toolchains into `build/`. Run Windows setup in a non-elevated PowerShell 7 shell; its automatic driver registration is restricted to ephemeral GitHub-hosted runners. The Windows CI driver is SwiftShader software Vulkan. The macOS toolchain uses MoltenVK and requires a Metal-capable device. Native macOS scene rendering, GLFW presentation, and relocated `.app` execution passed on Apple's paravirtual device, including launch without development SDK paths. Broader editor interaction, audio, and release gates remain in the implementation status.
+Native Windows and macOS CPU suites pass CI. Linux Vulkan CI passes all 17 integrated checks, including GLFW presentation. Graphics validation uses `scripts/SetupWindowsVulkan.ps1` on Windows and `scripts/BootstrapMacOS.sh` on macOS; both fetch verified toolchains into `build/`. Run Windows setup in a non-elevated PowerShell 7 shell; its automatic driver registration is restricted to ephemeral GitHub-hosted runners. Windows SwiftShader passes headless rendering, the upstream asset corpus, editor images and real keyboard gameplay in a relocated package. The macOS toolchain uses MoltenVK and requires a Metal-capable device. Native macOS rendering, corpus, editor images, minimize/restore and relocated `.app` execution passed on Apple's paravirtual device, including launch without development SDK paths.
 
 ## Development
 
 Follow [AGENTS.md](AGENTS.md) and repository workflows in `skills/`. Review and test changes before committing. Third-party revisions and archive hashes are in `cmake/Dependencies.lock.json`. Engine code follows Hazel naming conventions.
 
-Windows and macOS are required targets with unverified native release gates. In particular, NVRHI/MoltenVK integration on macOS requires additional validation. See the implementation status for current evidence instead of inferring platform readiness from CMake configuration.
+Windows and macOS are required targets with remaining native release gates: Windows window lifecycle, macOS keyboard gameplay, broader editor interaction and device audio. See the implementation status for current evidence instead of inferring platform readiness from CMake configuration.

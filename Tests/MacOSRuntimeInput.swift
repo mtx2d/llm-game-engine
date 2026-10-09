@@ -146,16 +146,33 @@ final class GameWindow
 			{
 				try CheckAlive()
 				window = candidate
-				try RequireAX(AXUIElementSetAttributeValue(application, kAXFrontmostAttribute as CFString,
-					kCFBooleanTrue), "Activate launched game")
 				let focusDeadline = ProcessInfo.processInfo.systemUptime + 5
+				var nextActivationRequest = 0.0
 				var lastObservation = "The launched game has not become frontmost"
 				while ProcessInfo.processInfo.systemUptime < focusDeadline
 				{
 					// Let AppKit process activation before reading its foreground state.
 					try await Task.sleep(nanoseconds: 20_000_000)
 					try CheckAlive()
-					if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+					if NSWorkspace.shared.frontmostApplication?.processIdentifier != pid
+					{
+						// A GLFW window can become visible while its app is still busy
+						// preparing the first Vulkan frame. Activation is an asynchronous
+						// AppKit request; AX focus is proved separately once it completes.
+						let now = ProcessInfo.processInfo.systemUptime
+						if now >= nextActivationRequest
+						{
+							guard let running = NSRunningApplication(processIdentifier: pid) else
+							{
+								throw TestFailure(description: "Launched game disappeared before activation")
+							}
+							let accepted = running.activate(options: [])
+							lastObservation = accepted ? "AppKit accepted activation; waiting for foreground focus" :
+								"AppKit has not accepted the launched game's activation request"
+							nextActivationRequest = now + 0.25
+						}
+					}
+					else
 					{
 						do
 						{
