@@ -9,8 +9,8 @@ import subprocess
 import tempfile
 import time
 
-from NativeEditorWorkflow import prepare_project, run_workflow
-from WindowsRuntimeInputTests import (BOOL, HANDLE, Input, KeyboardInput, LONG, MouseInput,
+from NativeEditorWorkflow import prepare_project, run_workflow, save_image
+from WindowsRuntimeInputTests import (BOOL, HANDLE, GuiThreadInfo, Input, KeyboardInput, LONG, MouseInput,
                                      NativeWindow, Rectangle, wait_for_image)
 
 
@@ -19,7 +19,7 @@ class Point(ctypes.Structure):
 
 
 class EditorDriver(NativeWindow):
-    def __init__(self, process):
+    def __init__(self, process, artifacts):
         super().__init__(process)
         self.user.ClientToScreen.argtypes = [HANDLE, ctypes.POINTER(Point)]
         self.user.ClientToScreen.restype = BOOL
@@ -27,8 +27,56 @@ class EditorDriver(NativeWindow):
         self.user.GetSystemMetrics.restype = ctypes.c_int
         self.user.WindowFromPoint.argtypes = [Point]
         self.user.WindowFromPoint.restype = HANDLE
+        self.user.GetCursorPos.argtypes = [ctypes.POINTER(Point)]
+        self.user.GetCursorPos.restype = BOOL
         self.held_keys = set()
         self.held_mouse = False
+        self.pointer_target = None
+        self.artifacts = artifacts
+        self.events = []
+        self.started = time.monotonic()
+
+    def record(self, operation, **values):
+        assert len(self.events) < 1000, "Native input evidence exceeded its bound"
+        self.events.append({"operation": operation, "seconds": time.monotonic() - self.started, **values})
+
+    def cursor(self, verify_target=True):
+        self.assert_alive()
+        point = Point()
+        self.check(self.user.GetCursorPos(ctypes.byref(point)), "GetCursorPos")
+        hit_window = self.user.WindowFromPoint(point)
+        matches = self.pointer_target is not None and abs(point.x - self.pointer_target.x) <= 1 and \
+            abs(point.y - self.pointer_target.y) <= 1
+        if hit_window != self.window or (verify_target and not matches):
+            self.record("cursor rejected", cursor_screen=[point.x, point.y], hit_window=hit_window,
+                        owned_window=self.window, verify_target=verify_target,
+                        requested_screen=None if self.pointer_target is None else
+                        [self.pointer_target.x, self.pointer_target.y])
+        assert hit_window == self.window, "Actual cursor is outside the owned editor"
+        assert not verify_target or matches, "Native cursor did not remain at the requested editor point"
+        return [point.x, point.y]
+
+    def capture_window(self):
+        self.assert_alive()
+        info = GuiThreadInfo()
+        info.size = ctypes.sizeof(info)
+        thread = self.owned_thread(self.window)
+        self.check(self.user.GetGUIThreadInfo(thread, ctypes.byref(info)), "GetGUIThreadInfo")
+        if info.capture not in (None, self.window):
+            self.record("capture rejected", capture_window=info.capture, owned_window=self.window)
+            raise AssertionError("Another window captured the editor's mouse input")
+        return info.capture
+
+    def wait_capture(self, pressed, timeout=10):
+        deadline = time.monotonic() + timeout
+        captured = self.capture_window()
+        while time.monotonic() < deadline:
+            captured = self.capture_window()
+            if captured == (self.window if pressed else None):
+                return captured
+            time.sleep(0.02)
+        self.record("capture timeout", pressed=pressed, capture_window=captured, owned_window=self.window)
+        raise AssertionError("Editor did not acknowledge the native mouse capture transition")
 
     def initialize(self):
         self.find()
@@ -73,18 +121,28 @@ class EditorDriver(NativeWindow):
         event.type = 0
         event.value.mouse = MouseInput(round((point.x - left) * 65535 / (screen_width - 1)),
                                        round((point.y - top) * 65535 / (screen_height - 1)),
-                                       0, 0x0001 | 0x4000 | 0x8000, 0, 0)
+                                       0, 0x0001 | 0x2000 | 0x4000 | 0x8000, 0, 0)
+        # Preserve each WM_MOUSEMOVE. GLFW's Win32 button callback consumes the
+        # position from earlier movement messages, not the button message itself.
+        self.pointer_target = point
+        self.record("move requested", client=[x, y], requested_screen=[point.x, point.y])
         self.send(event)
         self.settle()
+        self.record("move", client=[x, y], requested_screen=[point.x, point.y], cursor_screen=self.cursor())
 
-    def button(self, pressed):
+    def button(self, pressed, verify_target=True):
         assert self.held_mouse != pressed, "Unbalanced native mouse transition"
+        self.record("button requested", pressed=pressed, verify_target=verify_target)
+        self.cursor(verify_target)
+        self.capture_window()
         event = Input()
         event.type = 0
         event.value.mouse = MouseInput(0, 0, 0, 0x0002 if pressed else 0x0004, 0, 0)
         self.send(event)
         self.held_mouse = pressed
+        captured = self.wait_capture(pressed)
         self.settle()
+        self.record("button", pressed=pressed, capture_window=captured, cursor_screen=self.cursor(verify_target))
 
     def key(self, code, pressed):
         assert (code in self.held_keys) != pressed, "Unbalanced native key transition"
@@ -108,10 +166,56 @@ class EditorDriver(NativeWindow):
     def drag(self, points):
         assert len(points) >= 2
         self.move(*points[0])
+        # A fixed delay cannot prove ImGui has consumed the hover that makes an
+        # ImGuizmo click eligible. Observe the actual highlighted world-X handle
+        # before pressing, then each visible held-motion response before moving on.
+        image = self.wait_drag_image("hover", lambda image: self.hover_pixels(image, points[0]), minimum=8)
         self.button(True)
-        for point in points[1:]:
+        previous = image
+        image = self.wait_drag_image("pressed", lambda image: self.changed_viewport_pixels(previous, image), minimum=32)
+        for index, point in enumerate(points[1:], 1):
+            previous = image
             self.move(*point)
+            image = self.wait_drag_image(f"motion-{index}",
+                                         lambda image: self.changed_viewport_pixels(previous, image), minimum=32)
         self.button(False)
+
+    @staticmethod
+    def hover_pixels(image, point):
+        width, height, pixels = image
+        x, y = map(round, point)
+        assert 6 <= x < width - 6 and 6 <= y < height - 6
+        # The pinned ImGuizmo selection color is orange, alpha blended over the
+        # fixture. Neither the red unselected X axis nor the gray disabled axis
+        # satisfies both channel differences in this small handle-only region.
+        return sum(r > g + 30 and g > b + 30
+                   for row in range(y - 6, y + 7) for column in range(x - 6, x + 7)
+                   for r, g, b in [pixels[(row * width + column) * 3:(row * width + column) * 3 + 3]])
+
+    @staticmethod
+    def changed_viewport_pixels(before, after):
+        width, height, pixels = before
+        assert after[:2] == before[:2], "Native editor resized during the drag"
+        current = after[2]
+        # Exclude widgets, the toolbar and cursor sprites (GDI captures no cursor).
+        return sum(sum(abs(a - b) for a, b in zip(pixels[offset:offset + 3], current[offset:offset + 3])) > 30
+                   for row in range(130, height - 226) for column in range(270, width - 340)
+                   for offset in [(row * width + column) * 3])
+
+    def wait_drag_image(self, stage, measure, minimum, timeout=15):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.cursor()
+            image = self.capture()
+            pixels = measure(image)
+            if pixels >= minimum:
+                save_image(self.artifacts / f"Drag-{stage}.ppm", image)
+                self.record("drag image", stage=stage, pixels=pixels, minimum=minimum)
+                return image
+            time.sleep(0.05)
+        save_image(self.artifacts / f"Drag-{stage}-failed.ppm", image)
+        self.record("drag image timeout", stage=stage, pixels=pixels, minimum=minimum)
+        raise AssertionError(f"Native editor did not present the expected gizmo {stage} response")
 
     def replace_text(self, x, y, text):
         assert text.isascii() and len(text) <= 128, "Native editor test text is deliberately bounded ASCII"
@@ -148,7 +252,10 @@ class EditorDriver(NativeWindow):
         try:
             if self.process.poll() is None and self.focused():
                 if self.held_mouse:
-                    self.button(False)
+                    # The failed operation may have observed a moved cursor.
+                    # Release our own button at its current owned-window point;
+                    # foreground and hit-window checks still apply.
+                    self.button(False, verify_target=False)
                 for code in tuple(self.held_keys):
                     self.key(code, False)
         finally:
@@ -165,6 +272,9 @@ def main():
     artifacts.mkdir(parents=True, exist_ok=True)
     (artifacts / "Workflow.json").unlink(missing_ok=True)
     (artifacts / "EditorFinal.ppm").unlink(missing_ok=True)
+    (artifacts / "Input.json").unlink(missing_ok=True)
+    for previous in artifacts.glob("Drag-*.ppm"):
+        previous.unlink()
     with tempfile.TemporaryDirectory(prefix="AsterWindowsEditor-") as temporary:
         project = Path(temporary) / "Assets"
         scene_path = prepare_project(assets, project)
@@ -173,16 +283,18 @@ def main():
                                         "--screenshot", str(artifacts / "EditorFinal.ppm")], stdout=log, stderr=log)
             driver = None
             try:
-                driver = EditorDriver(process)
+                driver = EditorDriver(process, artifacts)
                 driver.initialize()
                 report = run_workflow(driver, scene_path, artifacts)
                 assert process.wait(timeout=30) == 0, "Native editor reported rendering or simulation errors"
                 report["assertions"].append("graceful native close")
-                (artifacts / "Workflow.json").write_text(json.dumps(report, indent=2) + "\n")
             finally:
                 try:
                     if driver:
-                        driver.cleanup()
+                        try:
+                            driver.cleanup()
+                        finally:
+                            (artifacts / "Input.json").write_text(json.dumps(driver.events, indent=2) + "\n")
                 finally:
                     if process.poll() is None:
                         process.terminate()
@@ -191,6 +303,9 @@ def main():
                         except subprocess.TimeoutExpired:
                             process.kill()
                             process.wait(timeout=5)
+            # Cleanup and evidence publication must succeed before claiming the
+            # whole native workflow passed, including restoration of DPI state.
+            (artifacts / "Workflow.json").write_text(json.dumps(report, indent=2) + "\n")
     print("Native Win32 editor: SendInput gizmo/text authoring, one-step Undo, save/reload, play/stop and WM_CLOSE passed")
 
 

@@ -195,6 +195,10 @@ jobs:
               subprocess.run(command + ["--artifacts", str(artifacts / "playback")], check=True, timeout=45)
       - name: Test native CPU, Vulkan output and GLFW presentation
         run: ctest --test-dir build/windows-native -C Release --output-on-failure
+      - name: Check native Windows editor repeatability
+        run: |
+          Copy-Item -LiteralPath build/windows-native/Testing/Temporary/LastTest.log -Destination build/windows-native/Testing/Temporary/FullSuite.log
+          ctest --test-dir build/windows-native -C Release -R '^NativeEditor$' --repeat until-fail:3 --output-on-failure
       - name: Test relocated graphical Windows export
         run: >-
           python Tests/ExportTests.py --editor build/windows-native/Release/AsterEditor.exe
