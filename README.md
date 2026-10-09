@@ -1,6 +1,6 @@
 # Aster
 
-A native C++20 3D game engine under development from [GameEngineDoc.md](GameEngineDoc.md). The complete release requirements and evidence are tracked in [ImplementationStatus.md](docs/ImplementationStatus.md). This repository is not yet a finished engine release.
+A native C++20 3D game engine built from [GameEngineDoc.md](GameEngineDoc.md). Automated software acceptance passes on Windows, macOS and Ubuntu; hardware audio validation remains open. The complete release requirements, evidence and limitations are tracked in [ImplementationStatus.md](docs/ImplementationStatus.md).
 
 The implementation includes a scene library, Lua/Bullet/miniaudio simulation, a native graphical editor with transform gizmos, a JSON command interface, and a separate shipping runtime. The GLFW/NVRHI Vulkan renderer imports glTF materials and textures, renders PBR lighting into HDR, processes Poly Haven HDRIs for image-based lighting, and adds soft shadow maps and SSAO. These rendering features have automated GPU image checks. Game export produces a relocatable asset package and runtime. Remaining quality, platform, and release gates are tracked in the implementation status.
 
@@ -43,10 +43,10 @@ python3 Tests/PipeWireAudioTests.py --editor build/release/AsterEditor \
   --assets Assets --artifacts build/pipewire-audio-evidence
 ```
 
-The editor also accepts JSON lines as documented in [Automation.md](docs/Automation.md). The runtime opens a game window by default; `--steps` selects deterministic headless execution. [Export.md](docs/Export.md) describes packaging and runtime arguments. Renderer tests use a real Vulkan device and validate pixel readback. Native GUI interaction checks require a display, X11, and `xdotool`:
+The editor also accepts JSON lines as documented in [Automation.md](docs/Automation.md). The runtime opens a game window by default; `--steps` selects deterministic headless execution. [Export.md](docs/Export.md) describes packaging and runtime arguments. Renderer tests use a real Vulkan device and validate pixel readback. Linux GUI interaction checks require a display, X11, and `xdotool`:
 
 ```sh
-xvfb-run -a -s '-screen 0 1600x1000x24' python3 Tests/GuiTests.py \
+xvfb-run -a -s '-screen 0 1600x1000x24 -noreset' python3 Tests/GuiTests.py \
   --editor build/debug/AsterEditor --assets Assets --artifacts build/gui-evidence
 ```
 
@@ -59,10 +59,12 @@ cmake --build --preset debug --parallel 4
 ctest --preset debug -R AssetCorpus
 ```
 
-Native Windows and macOS CPU suites pass CI. Linux Vulkan CI passes all 17 integrated checks, including GLFW presentation. Graphics validation uses `scripts/SetupWindowsVulkan.ps1` on Windows and `scripts/BootstrapMacOS.sh` on macOS; both fetch verified toolchains into `build/`. Run Windows setup in a non-elevated PowerShell 7 shell; its automatic driver registration is restricted to ephemeral GitHub-hosted runners. Windows SwiftShader passes headless rendering, the upstream asset corpus, editor images and real keyboard gameplay in a relocated package. The macOS toolchain uses MoltenVK and requires a Metal-capable device. Native macOS rendering, corpus, editor images, minimize/restore and relocated `.app` execution passed on Apple's paravirtual device, including launch without development SDK paths.
+Native CPU suites pass on all three platforms, as do Linux ASan/UBSan checks. [The validated CI run](https://github.com/mtx2d/llm-game-engine/actions/runs/37993581848) passed all 18 Linux integrated tests and all 16 Windows/macOS tests, including GPU output, window lifecycle, native editor authoring and keyboard gameplay. Relocated graphical exports also pass on all three platforms, including macOS Release. Windows/macOS native interaction tests require an interactive desktop; the macOS helper checks existing Accessibility, PostEvent and ScreenCapture permissions without prompting or changing security settings.
+
+Graphics validation uses `scripts/SetupWindowsVulkan.ps1` on Windows and `scripts/BootstrapMacOS.sh` on macOS; both fetch verified toolchains into `build/`. Run Windows setup in a non-elevated PowerShell 7 shell; its automatic driver registration is restricted to ephemeral GitHub-hosted runners. Windows CI uses SwiftShader, so these results do not establish a physical Windows GPU matrix. macOS uses MoltenVK and requires a Metal-capable device; native CI passed on Apple's paravirtual device. Linux validation includes an NVIDIA GTX 1080 and llvmpipe.
 
 ## Development
 
 Follow [AGENTS.md](AGENTS.md) and repository workflows in `skills/`. Review and test changes before committing. Third-party revisions and archive hashes are in `cmake/Dependencies.lock.json`. Engine code follows Hazel naming conventions.
 
-Windows and macOS are required targets with remaining native release gates: Windows window lifecycle, macOS keyboard gameplay, broader editor interaction and device audio. See the implementation status for current evidence instead of inferring platform readiness from CMake configuration.
+Hardware audio is the remaining release acceptance gate. The workspace exposes only virtual output, and hosted Windows/Linux runners have no audio backend; macOS device-clock playback and the workspace's owned PipeWire PCM capture pass without establishing physical listening. See the implementation status for the complete evidence and supported-domain limits.
