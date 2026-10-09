@@ -8,6 +8,7 @@ import json
 import math
 from pathlib import Path
 import shutil
+import struct
 import time
 
 from GuiTests import project_editor_point
@@ -46,19 +47,22 @@ def run_workflow(driver, scene_path, artifacts):
     scene_path, artifacts = Path(scene_path), Path(artifacts)
     artifacts.mkdir(parents=True, exist_ok=True)
     (artifacts / "Workflow.json").unlink(missing_ok=True)
-    baseline = json.loads(scene_path.read_text())
+    # Authored decimal component values become C++ floats when loaded. Match
+    # their exact binary32 values so a legitimate first Save still equals the
+    # complete fixture, without broadly tolerating unrelated scene mutations.
+    baseline = json.loads(scene_path.read_text(),
+                          parse_float=lambda value: struct.unpack("<f", struct.pack("<f", float(value)))[0])
     gallery = next(entity for entity in baseline["Entities"] if entity["Name"] == "Gallery")
     original_transform = gallery["Transform"]
     gallery_id = gallery["ID"]
     width, height = driver.size()
     assert width >= 900 and height >= 600, "Native desktop leaves insufficient room for the editor workflow"
-    save_image(artifacts / "EditorBefore.ppm", driver.capture())
 
     def entity(scene, identifier=gallery_id):
         return next(value for value in scene["Entities"] if value["ID"] == identifier)
 
-    def save_and_wait(predicate):
-        deadline = time.monotonic() + 15
+    def save_and_wait(predicate, timeout=15):
+        deadline = time.monotonic() + timeout
         previous_write = scene_path.stat().st_mtime_ns
         while time.monotonic() < deadline:
             driver.assert_alive()
@@ -73,6 +77,12 @@ def run_workflow(driver, scene_path, artifacts):
         (artifacts / "LastSaved.aster").write_bytes(scene_path.read_bytes())
         save_image(artifacts / "EditorFailure.ppm", driver.capture())
         raise AssertionError("Native editor did not persist the expected state; see LastSaved.aster")
+
+    # A newly visible native window can still expose desktop pixels before its
+    # first presentation. Prove that the actual editor handled a Save click and
+    # wrote the unchanged fixture before sending the first authoring gesture.
+    save_and_wait(lambda scene: scene == baseline, timeout=30)
+    save_image(artifacts / "EditorBefore.ppm", driver.capture())
 
     # Select the actual Gallery entity, then drag its world-X handle across eight
     # separate motion events. ImGuizmo's screen-space handle scales with width.
@@ -148,7 +158,7 @@ def run_workflow(driver, scene_path, artifacts):
         "logical_width": width, "logical_height": height, "gallery_id": gallery_id, "created_id": created_id,
         "play_changed_viewport_samples": changed, "viewport_sample_count": len(authored_samples),
         "gizmo_path": path, "moved_transform": transform, "restored_transform": original_transform,
-        "assertions": ["world-X drag", "single Undo", "text rename", "Undo/Redo", "save/reload",
+        "assertions": ["native Save readiness", "world-X drag", "single Undo", "text rename", "Undo/Redo", "save/reload",
                        "entity creation", "play source preservation", "stop authored-state restoration"]
     }
     driver.close()

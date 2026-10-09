@@ -96,6 +96,36 @@ namespace
 		return {width, height};
 	}
 
+	std::pair<uint32_t, uint32_t> WaitForFramebufferResize(Aster::Renderer& renderer, uint32_t width, uint32_t height)
+	{
+		if (auto* window = static_cast<GLFWwindow*>(renderer.GetNativeWindow()))
+		{
+			// A window manager can acknowledge the logical resize before Vulkan
+			// and GLFW observe the same final surface extent. Pump the native loop
+			// and draw while waiting; a persistent disagreement must still fail.
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+			do
+			{
+				renderer.PollEvents();
+				Require(!renderer.ShouldClose(), "Native window closed while acknowledging resize");
+				renderer.RenderFrame();
+				RequireClean(renderer);
+				int framebufferWidth = 0;
+				int framebufferHeight = 0;
+				glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+				if (framebufferWidth > 0 && framebufferHeight > 0 &&
+					renderer.GetWidth() == static_cast<uint32_t>(framebufferWidth) &&
+					renderer.GetHeight() == static_cast<uint32_t>(framebufferHeight))
+				{
+					return RequireFramebufferSize(renderer, width, height);
+				}
+				std::this_thread::sleep_for(std::chrono::milliseconds(10));
+			} while (std::chrono::steady_clock::now() < deadline);
+			throw std::runtime_error("Native framebuffer and render target did not converge after resize");
+		}
+		return RequireFramebufferSize(renderer, width, height);
+	}
+
 	void TestNativeWindowLifecycle(Aster::Renderer& renderer)
 	{
 #if !defined(_WIN32) && !defined(__APPLE__)
@@ -307,8 +337,8 @@ void RunRendererTests(const std::filesystem::path& evidence)
 	RequireClean(renderer);
 
 	renderer.Resize(61, 17);
-	const auto [resizedWidth, resizedHeight] = RequireFramebufferSize(renderer, 61, 17);
 	RequireThrows<std::logic_error>([&]() { renderer.ReadbackRgba8(); }, "Resize retained stale frame contents");
+	const auto [resizedWidth, resizedHeight] = WaitForFramebufferResize(renderer, 61, 17);
 	const std::array<float, 4> resizedColor{0.5f, 0.125f, 0.75f, 1};
 	renderer.RenderFrame(resizedColor);
 	RequireColor(renderer.ReadbackRgba8(), resizedWidth, resizedHeight, resizedColor);
@@ -783,7 +813,7 @@ namespace
 		Require(reloaded[2] > 200 && reloaded[0] < 3 && reloaded[1] < 3,
 				"Asset invalidation did not replace GPU material");
 		renderer.Resize(96, 80);
-		const auto [sceneWidth, sceneHeight] = RequireFramebufferSize(renderer, 96, 80);
+		const auto [sceneWidth, sceneHeight] = WaitForFramebufferResize(renderer, 96, 80);
 		renderer.RenderScene(scene, fixtures, settings);
 		Require(CenterPixel(renderer.ReadbackRgba8())[2] > 200, "HDR scene pass failed after resize");
 		Aster::HDRImageAsset constantSky;

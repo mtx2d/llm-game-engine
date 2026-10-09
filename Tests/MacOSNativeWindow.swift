@@ -303,12 +303,12 @@ final class GameWindow
 		return Frame(width: cropped.width, height: cropped.height, pixels: pixels)
 	}
 
-	func WaitForImage(previous: String? = nil) async throws -> Frame
+	func WaitForImage(previous: String? = nil, region: CGRect? = nil) async throws -> Frame
 	{
 		let deadline = ProcessInfo.processInfo.systemUptime + 30
 		while ProcessInfo.processInfo.systemUptime < deadline
 		{
-			let frame = try await Capture()
+			let frame = try await Capture(region: region)
 			if frame.populated && frame.digest != previous { return frame }
 			try await Task.sleep(nanoseconds: 20_000_000)
 		}

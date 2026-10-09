@@ -40,7 +40,7 @@ class MacEditorDriver:
                 if not allow_exit:
                     assert self.editor.poll() is None, "Editor exited during native authoring"
                 assert selector.select(max(0, deadline - time.monotonic())), \
-                    "Native macOS editor helper did not acknowledge rendered frames"
+                    "Native macOS editor helper did not acknowledge its bounded input operation"
                 chunk = os.read(self.helper.stdout.fileno(), 65536)
                 assert chunk, "Native helper exited; inspect MacOSEditorInput.stderr"
                 self.pending += chunk
@@ -85,8 +85,8 @@ class MacEditorDriver:
 
     def replace_text(self, x, y, text):
         self.click(x, y)
-        # Every modifier/key edge is acknowledged across actual compositor
-        # frames, so ImGui cannot lose Command+A to a queued release.
+        # The helper paces modifier/key edges so ImGui can observe Command+A.
+        # Persisted scene predicates establish completion after text input.
         for key, down in (("Command", True), ("A", True), ("A", False), ("Command", False)):
             self.request("key", key=key, down=down)
         self.request("text", text=text)
@@ -114,7 +114,7 @@ class MacEditorDriver:
     def cleanup(self):
         (self.artifacts / "MacOSEditorEvents.json").write_text(json.dumps(self.events, indent=2) + "\n")
         if self.helper.poll() is None:
-            # EOF lets Swift release only its own held controls and stop capture.
+            # EOF lets Swift release only its own held controls.
             self.helper.stdin.close()
             try:
                 self.helper.wait(timeout=10)

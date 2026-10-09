@@ -1,57 +1,18 @@
 import AppKit
-import CoreMedia
 import Darwin
 import Foundation
-import ScreenCaptureKit
-
-// Only new, complete compositor frames acknowledge input. Cursor-only movement
-// and idle callbacks must not masquerade as rendered UI progress.
-final class PresentedFrames: NSObject, SCStreamOutput, SCStreamDelegate
-{
-	private let lock = NSLock()
-	private var count: UInt64 = 0
-	private var failure: String?
-
-	func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType)
-	{
-		guard type == .screen, sampleBuffer.isValid,
-			let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
-				as? [[SCStreamFrameInfo: Any]],
-			let status = attachments.first?[.status] as? Int,
-			SCFrameStatus(rawValue: status) == .complete else { return }
-		lock.lock()
-		count += 1
-		lock.unlock()
-	}
-
-	func stream(_ stream: SCStream, didStopWithError error: Error)
-	{
-		lock.lock()
-		failure = String(describing: error)
-		lock.unlock()
-	}
-
-	func Snapshot() throws -> UInt64
-	{
-		lock.lock()
-		defer { lock.unlock() }
-		if let failure { throw TestFailure(description: "Owned-window frame stream failed: \(failure)") }
-		return count
-	}
-}
 
 @MainActor
 final class EditorInput
 {
 	let game: GameWindow
-	let frames: PresentedFrames
-	let stream: SCStream
 	let client: CGRect
 	let source: CGEventSource
 	var pointer: CGPoint
 	var leftDown = false
 	var commandDown = false
 	var keyDown: CGKeyCode?
+	var eventsPosted = 0
 
 	init(game: GameWindow) throws
 	{
@@ -70,31 +31,16 @@ final class EditorInput
 		self.client = client
 		try Require(client.width >= 900 && client.height >= 600, "Native editor client area is too small")
 		pointer = CGPoint(x: window.frame.minX + client.midX, y: window.frame.minY + client.midY)
-		let configuration = SCStreamConfiguration()
-		configuration.width = Int(window.frame.width.rounded())
-		configuration.height = Int(window.frame.height.rounded())
-		configuration.minimumFrameInterval = CMTime(value: 1, timescale: 60)
-		configuration.queueDepth = 3
-		configuration.showsCursor = false
-		configuration.ignoreShadowsSingleWindow = true
-		let frames = PresentedFrames()
-		self.frames = frames
-		stream = SCStream(filter: SCContentFilter(desktopIndependentWindow: window),
-			configuration: configuration, delegate: frames)
-		try stream.addStreamOutput(frames, type: .screen,
-			sampleHandlerQueue: DispatchQueue(label: "Aster.NativeEditorFrames"))
 	}
 
-	func Wait(after count: UInt64, timeout: Double = 15) async throws
+	func Settle() async throws
 	{
-		let deadline = ProcessInfo.processInfo.systemUptime + timeout
-		while try frames.Snapshot() < count + 3
-		{
-			try game.CheckAlive()
-			try Require(ProcessInfo.processInfo.systemUptime < deadline,
-				"Editor did not present three new complete frames after native input")
-			try await Task.sleep(nanoseconds: 10_000_000)
-		}
+		// Separate native event edges so ImGui can observe held controls. This
+		// pacing is not a rendering acknowledgment: the shared workflow proves
+		// completion through persisted scene predicates and owned-window pixels.
+		// ScreenCaptureKit emits idle callbacks for an unchanged display, so a
+		// responsive static editor cannot promise new complete frames per event.
+		try await Task.sleep(nanoseconds: 250_000_000)
 		try game.CheckFocused()
 	}
 
@@ -138,11 +84,11 @@ final class EditorInput
 		}
 		event.flags = []
 		event.setIntegerValueField(.mouseEventClickState, value: 1)
-		let before = try frames.Snapshot()
 		event.postToPid(game.pid)
+		eventsPosted += 1
 		if action == "down" { leftDown = true }
 		if action == "up" { leftDown = false }
-		try await Wait(after: before)
+		try await Settle()
 	}
 
 	func Key(_ key: String, down: Bool) async throws
@@ -176,11 +122,11 @@ final class EditorInput
 		if key == "Command" { event.type = .flagsChanged }
 		let nextCommandDown = key == "Command" ? down : commandDown
 		event.flags = nextCommandDown ? .maskCommand : []
-		let before = try frames.Snapshot()
 		event.postToPid(game.pid)
+		eventsPosted += 1
 		if key == "Command" { commandDown = down }
 		else { keyDown = down ? code : nil }
-		try await Wait(after: before)
+		try await Settle()
 	}
 
 	func Text(_ text: String) async throws
@@ -206,14 +152,14 @@ final class EditorInput
 				down.keyboardSetUnicodeString(stringLength: units.count, unicodeString: $0.baseAddress)
 				up.keyboardSetUnicodeString(stringLength: units.count, unicodeString: $0.baseAddress)
 			}
-			var before = try frames.Snapshot()
 			down.postToPid(game.pid)
+			eventsPosted += 1
 			keyDown = 0
-			try await Wait(after: before)
-			before = try frames.Snapshot()
+			try await Settle()
 			up.postToPid(game.pid)
+			eventsPosted += 1
 			keyDown = nil
-			try await Wait(after: before)
+			try await Settle()
 		}
 	}
 
@@ -271,8 +217,8 @@ struct NativeEditorInput
 			try await game.FindAndFocus()
 			let driver = try EditorInput(game: game)
 			input = driver
-			try await driver.stream.startCapture()
-			try await driver.Wait(after: 0, timeout: 30)
+			let ready = try await game.WaitForImage(region: driver.client)
+			try ready.Save(URL(fileURLWithPath: arguments[2]).appendingPathComponent("EditorReady.ppm"))
 			try WriteJSON(["ok": true, "pid": pid, "width": Int(driver.client.width.rounded()),
 				"height": Int(driver.client.height.rounded()), "window_id": game.window!.windowID,
 				"permissions": permissions] as [String: Any])
@@ -304,13 +250,12 @@ struct NativeEditorInput
 					try frame.Save(URL(fileURLWithPath: arguments[2]).appendingPathComponent("EditorSnapshot.ppm"))
 				case "close":
 					try driver.ReleaseHeldInput()
-					try await driver.stream.stopCapture()
 					try game.RequestClose()
-					try WriteJSON(["ok": true, "closed": true, "complete_frames": try driver.frames.Snapshot()] as [String: Any])
+					try WriteJSON(["ok": true, "closed": true, "events_posted": driver.eventsPosted] as [String: Any])
 					return
 				default: throw TestFailure(description: "Unknown native editor operation")
 				}
-				try WriteJSON(["ok": true, "complete_frames": try driver.frames.Snapshot()] as [String: Any])
+				try WriteJSON(["ok": true, "events_posted": driver.eventsPosted] as [String: Any])
 			}
 			throw TestFailure(description: "Native editor driver reached EOF before graceful close")
 		}
@@ -321,8 +266,6 @@ struct NativeEditorInput
 			{
 				do { try input.ReleaseHeldInput() }
 				catch { diagnostic += "Owned input cleanup: \(error)\n" }
-				do { try await input.stream.stopCapture() }
-				catch { diagnostic += "Capture cleanup: \(error)\n" }
 			}
 			do { try FileHandle.standardError.write(contentsOf: Data(diagnostic.utf8)) }
 			catch { exit(2) }
