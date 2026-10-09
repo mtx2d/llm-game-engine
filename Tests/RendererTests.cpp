@@ -237,6 +237,26 @@ namespace
 		return {image.Pixels[offset], image.Pixels[offset + 1], image.Pixels[offset + 2]};
 	}
 
+	void RequireOcclusionMoved(const Aster::RenderImage& oldLit, const Aster::RenderImage& oldOccluded,
+							   const Aster::RenderImage& newLit, const Aster::RenderImage& newOccluded, int threshold)
+	{
+		Require(oldLit.Pixels.size() == oldOccluded.Pixels.size() && oldLit.Pixels.size() == newLit.Pixels.size() &&
+					oldLit.Pixels.size() == newOccluded.Pixels.size(),
+				"Motion image dimensions changed unexpectedly");
+		size_t released = 0;
+		size_t newlyOccluded = 0;
+		for (size_t byte = 0; byte < oldLit.Pixels.size(); byte += 4)
+		{
+			const bool oldMask = int(oldLit.Pixels[byte]) - int(oldOccluded.Pixels[byte]) > threshold;
+			const bool newMask = int(newLit.Pixels[byte]) - int(newOccluded.Pixels[byte]) > threshold;
+			released += oldMask && !newMask;
+			newlyOccluded += newMask && !oldMask;
+		}
+		std::cout << "Occlusion movement released/new pixels " << released << '/' << newlyOccluded << '\n';
+		Require(released > 15 && newlyOccluded > 15,
+				"Motion did not remove old occlusion and create occlusion at the new location");
+	}
+
 	void RunSceneRenderingTests(Aster::RendererOptions options)
 	{
 		options.Width = 128;
@@ -247,6 +267,15 @@ namespace
 		Aster::RenderSettings settings;
 		settings.AmbientIntensity = 0;
 		settings.BackgroundColor = {0, 0, 0};
+		struct MotionReference
+		{
+			nlohmann::json Scene;
+			Aster::RenderSettings Settings;
+			Aster::RenderImage Image;
+		};
+		std::vector<MotionReference> motionReferences;
+		const auto rememberMotion = [&](const Aster::RenderImage& image)
+		{ motionReferences.push_back({scene.Serialize(), settings, image}); };
 		RequireThrows<std::invalid_argument>([&]() { renderer.RenderScene(scene, project, settings); },
 											 "Scene without primary camera was rendered");
 		auto editorSettings = settings;
@@ -355,6 +384,7 @@ namespace
 		fixture["materials"][0]["emissiveFactor"] = {0, 0, 0};
 		fixture["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"] = {1, 1, 1, 1};
 		writeFixture("white.gltf");
+		const auto motionFixture = fixture;
 		scene.Get(mesh).MeshRenderer->Mesh = "white.gltf";
 		scene.Get(light).Light->Intensity = 3;
 		renderer.RenderScene(scene, fixtures, settings);
@@ -436,6 +466,28 @@ namespace
 			}
 			std::cout << "Shadow type " << static_cast<int>(type) << " darkened pixels " << darkened << '\n';
 			Require(darkened > 15, "Shadow-casting light did not darken receiver pixels behind the occluder");
+			const auto oldLightTransform = scene.Get(light).Transform;
+			scene.Get(light).Transform.Translation.x = -1.5f;
+			scene.Get(light).Transform.Rotation.y = -0.5f;
+			renderer.RenderScene(scene, fixtures, settings);
+			const auto movedLightShadow = renderer.ReadbackRgba8();
+			settings.Shadows = false;
+			renderer.RenderScene(scene, fixtures, settings);
+			const auto movedLightLit = renderer.ReadbackRgba8();
+			RequireOcclusionMoved(unshadowed, shadowed, movedLightLit, movedLightShadow, 20);
+			scene.Get(occluder).Transform.Translation.x = -0.65f;
+			renderer.RenderScene(scene, fixtures, settings);
+			const auto movedOccluderLit = renderer.ReadbackRgba8();
+			settings.Shadows = true;
+			renderer.RenderScene(scene, fixtures, settings);
+			const auto movedOccluderShadow = renderer.ReadbackRgba8();
+			RequireOcclusionMoved(movedLightLit, movedLightShadow, movedOccluderLit, movedOccluderShadow, 20);
+			rememberMotion(movedOccluderShadow);
+			scene.Get(light).Transform = oldLightTransform;
+			scene.Get(occluder).Transform.Translation.x = 0;
+			renderer.RenderScene(scene, fixtures, settings);
+			Require(renderer.ReadbackRgba8().Pixels == shadowed.Pixels,
+					"Restoring light and occluder transforms retained stale shadow data");
 			scene.Get(light).Light->CastShadows = false;
 			renderer.RenderScene(scene, fixtures, settings);
 			Require(renderer.ReadbackRgba8().Pixels == unshadowed.Pixels, "CastShadows=false retained a shadow");
@@ -486,13 +538,36 @@ namespace
 		}
 		std::cout << "SSAO darkened pixels " << occludedPixels << '\n';
 		Require(occludedPixels > 15, "SSAO did not darken ambient lighting near the occluder");
+		scene.Get(occluder).Transform.Translation.x = 0.65f;
+		renderer.RenderScene(scene, fixtures, settings);
+		const auto movedAo = renderer.ReadbackRgba8();
+		rememberMotion(movedAo);
+		settings.AmbientOcclusion = false;
+		renderer.RenderScene(scene, fixtures, settings);
+		RequireOcclusionMoved(ambientWithoutAo, ambientWithAo, renderer.ReadbackRgba8(), movedAo, 8);
+		settings.AmbientOcclusion = true;
+		scene.Get(occluder).Transform.Translation.x = 2.1f;
+		renderer.RenderScene(scene, fixtures, settings);
+		const auto edgeAo = renderer.ReadbackRgba8();
+		rememberMotion(edgeAo);
+		scene.Get(occluder).Transform.Translation.x = 3.0f;
+		renderer.RenderScene(scene, fixtures, settings);
+		const auto offscreenAo = renderer.ReadbackRgba8();
 		scene.Get(occluder).MeshRenderer->Visible = false;
 		renderer.RenderScene(scene, fixtures, settings);
 		const auto flatAo = renderer.ReadbackRgba8();
+		Require(offscreenAo.Pixels == flatAo.Pixels, "Offscreen occluder left stale SSAO on the receiver");
+		Require(edgeAo.Pixels != flatAo.Pixels, "SSAO edge-motion fixture did not intersect the viewport");
 		settings.AmbientOcclusion = false;
 		renderer.RenderScene(scene, fixtures, settings);
 		Require(renderer.ReadbackRgba8().Pixels == flatAo.Pixels, "SSAO darkened an isolated flat receiver");
 		scene.Get(occluder).MeshRenderer->Visible = true;
+		scene.Get(occluder).Transform.Translation.x = 0;
+		settings.AmbientOcclusion = true;
+		renderer.RenderScene(scene, fixtures, settings);
+		Require(renderer.ReadbackRgba8().Pixels == ambientWithAo.Pixels,
+				"Restoring the occluder transform retained stale SSAO or depth data");
+		settings.AmbientOcclusion = false;
 		settings.AmbientIntensity = 0;
 		scene.Get(light).Light->Intensity = 3;
 		scene.Get(light).Light->Type = Aster::LightType::Directional;
@@ -772,6 +847,23 @@ namespace
 		RequireClean(renderer);
 		renderer.Shutdown();
 		RequireClean(renderer);
+		{
+			std::ofstream stream(fixturePath / "white.gltf");
+			stream << motionFixture.dump(2);
+			Require(stream.good(), "Failed to restore the motion reference asset");
+		}
+		for (const auto& reference : motionReferences)
+		{
+			auto referenceScene = Aster::Scene::Deserialize(reference.Scene);
+			Aster::Renderer freshRenderer(options);
+			freshRenderer.RenderScene(referenceScene, fixtures, reference.Settings);
+			Require(freshRenderer.ReadbackRgba8().Pixels == reference.Image.Pixels,
+					"Reused shadow/SSAO passes differ from a fresh renderer at the same final scene state");
+			freshRenderer.Shutdown();
+			RequireClean(freshRenderer);
+		}
+		std::cout << "Validated moving lights, shadow casters, SSAO viewport edges, and " << motionReferences.size()
+				  << " fresh-renderer motion references\n";
 		std::cout << "Validated glTF textures, camera, transforms, PBR lights, HDR exposure, IBL, sky, asset reload, "
 					 "shadows, SSAO, and scene "
 					 "resize\n";

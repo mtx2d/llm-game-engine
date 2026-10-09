@@ -1,3 +1,4 @@
+#include <Aster/Assets/AssetImporter.h>
 #include <Aster/Core/ExecutablePath.h>
 #include <Aster/Editor/CommandProcessor.h>
 #include <Aster/Editor/GuiLayer.h>
@@ -71,6 +72,34 @@ namespace Aster
 			data.AudioSource = AudioSourceComponent{};
 			data.AudioSource->Path = "Sound.wav";
 			return defaults.Serialize().at("Entities").at(0);
+		}
+
+		std::optional<double> IntersectTriangle(glm::dvec3 origin, glm::dvec3 direction, glm::dvec3 first,
+												glm::dvec3 second, glm::dvec3 third)
+		{
+			const auto edge = second - first;
+			const auto otherEdge = third - first;
+			const auto perpendicular = glm::cross(direction, otherEdge);
+			const double determinant = glm::dot(edge, perpendicular);
+			const double tolerance = 1e-12 * glm::length(edge) * glm::length(perpendicular);
+			if (std::abs(determinant) <= tolerance)
+			{
+				return std::nullopt;
+			}
+			const auto offset = origin - first;
+			const double u = glm::dot(offset, perpendicular) / determinant;
+			if (u < 0.0 || u > 1.0)
+			{
+				return std::nullopt;
+			}
+			const auto cross = glm::cross(offset, edge);
+			const double v = glm::dot(direction, cross) / determinant;
+			if (v < 0.0 || u + v > 1.0)
+			{
+				return std::nullopt;
+			}
+			const double distance = glm::dot(otherEdge, cross) / determinant;
+			return std::isfinite(distance) && distance >= 0.0 ? std::optional(distance) : std::nullopt;
 		}
 	} // namespace
 
@@ -179,11 +208,20 @@ namespace Aster
 			if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
 			{
 				m_CancelGizmoUntilRelease = false;
-				FinishEdit(true);
+				// A gizmo may emit its final delta while processing the release frame.
+				// Commit it only after Manipulate retires the active handle below.
+				if (m_EditKind != EditKind::Gizmo)
+				{
+					FinishEdit(true);
+				}
 			}
 			if (m_EditKind != EditKind::None && ImGui::IsKeyPressed(ImGuiKey_Escape))
 			{
 				m_CancelGizmoUntilRelease = m_EditKind == EditKind::Gizmo;
+				if (m_CancelGizmoUntilRelease)
+				{
+					ImGuizmo::Enable(false);
+				}
 				FinishEdit(false);
 			}
 			if (m_Selected && !m_Commands.GetScene().FindByID(m_Selected))
@@ -231,6 +269,7 @@ namespace Aster
 			DrawInspector();
 			DrawAssets();
 			DrawGizmo();
+			PickViewport();
 			DrawExport();
 			DrawStatus();
 			ImGui::Render();
@@ -1014,6 +1053,80 @@ namespace Aster
 			if (m_EditKind == EditKind::Gizmo && !ImGuizmo::IsUsing())
 			{
 				FinishEdit(true);
+			}
+		}
+
+		void PickViewport()
+		{
+			if (m_Commands.IsPlaying() || !ImGui::IsMouseClicked(ImGuiMouseButton_Left) || !IsMouseInViewport() ||
+				ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow) || ImGui::IsAnyItemActive() ||
+				ImGuizmo::IsUsing() ||
+				ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
+			{
+				return;
+			}
+			if (m_Selected && m_Commands.GetScene().FindByID(m_Selected) && ImGuizmo::IsOver(m_GizmoOperation))
+			{
+				return;
+			}
+			try
+			{
+				const auto camera = EditorCamera();
+				const auto inverse = glm::inverse(glm::dmat4(camera.Projection) * glm::dmat4(camera.View));
+				const auto& io = ImGui::GetIO();
+				const double x = 2.0 * io.MousePos.x / io.DisplaySize.x - 1.0;
+				const double y = 1.0 - 2.0 * io.MousePos.y / io.DisplaySize.y;
+				const auto nearClip = inverse * glm::dvec4(x, y, 0.0, 1.0);
+				const auto farClip = inverse * glm::dvec4(x, y, 1.0, 1.0);
+				const auto origin = glm::dvec3(nearClip) / nearClip.w;
+				const auto target = glm::dvec3(farClip) / farClip.w;
+				const auto direction = glm::normalize(target - origin);
+				double closest = glm::length(target - origin);
+				std::uint64_t selected = 0;
+				AssetImporter importer(m_ProjectRoot);
+				// Import once per distinct path for this click. Keeping the cache local
+				// avoids stale selection geometry after meshes or dependencies are edited.
+				std::map<std::string, MeshAsset> meshes;
+				for (const auto entity : m_Commands.GetScene().Entities())
+				{
+					const auto& data = m_Commands.GetScene().Get(entity);
+					if (!data.MeshRenderer || !data.MeshRenderer->Visible)
+					{
+						continue;
+					}
+					const auto& path = data.MeshRenderer->Mesh;
+					auto [mesh, inserted] = meshes.try_emplace(path);
+					if (inserted)
+					{
+						mesh->second = importer.LoadMesh(path);
+					}
+					const auto world = glm::dmat4(m_Commands.GetScene().GetWorldTransform(entity));
+					for (const auto& primitive : mesh->second.Primitives)
+					{
+						const auto transform = world * glm::dmat4(primitive.Transform);
+						for (std::size_t index = 0; index + 2 < primitive.Indices.size(); index += 3)
+						{
+							std::array<glm::dvec3, 3> triangle;
+							for (std::size_t vertex = 0; vertex < triangle.size(); ++vertex)
+							{
+								const auto position = primitive.Vertices[primitive.Indices[index + vertex]].Position;
+								triangle[vertex] = glm::dvec3(transform * glm::dvec4(position, 1.0));
+							}
+							const auto distance =
+								IntersectTriangle(origin, direction, triangle[0], triangle[1], triangle[2]);
+							if (distance && *distance < closest)
+							{
+								closest = *distance;
+								selected = m_Commands.GetScene().GetPersistentID(entity);
+							}
+						}
+					}
+				}
+				m_Selected = selected;
+			}
+			catch (const std::exception& error)
+			{
+				m_Status = "Could not select a mesh: " + std::string(error.what());
 			}
 		}
 

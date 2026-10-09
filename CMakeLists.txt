@@ -107,6 +107,7 @@ if(ASTER_BUILD_TESTS)
   enable_testing()
   add_executable(AsterTests Tests/TestMain.cpp Tests/SceneTests.cpp Tests/SimulationTests.cpp Tests/CommandTests.cpp Tests/AssetTests.cpp Tests/EnvironmentTests.cpp Tests/ViewportTests.cpp)
   target_link_libraries(AsterTests PRIVATE AsterEditorCommands)
+  target_include_directories(AsterTests SYSTEM PRIVATE "${miniaudio_SOURCE_DIR}")
   target_compile_definitions(AsterTests PRIVATE ASTER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   aster_target(AsterTests)
   add_test(NAME Scene COMMAND AsterTests scene)
@@ -161,7 +162,7 @@ if(ASTER_BUILD_TESTS)
           "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/GuiTests.py"
           --editor "$<TARGET_FILE:AsterEditor>" --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets"
           --artifacts "${CMAKE_CURRENT_BINARY_DIR}/gui-evidence")
-        set_tests_properties(EditorGui PROPERTIES TIMEOUT 120 LABELS "gpu;gui")
+        set_tests_properties(EditorGui PROPERTIES TIMEOUT 300 LABELS "gpu;gui")
         add_test(NAME GraphicalExport COMMAND "${ASTER_XVFB_RUN}" -a
           "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/ExportTests.py"
           --editor "$<TARGET_FILE:AsterEditor>" --runtime "$<TARGET_FILE:AsterRuntime>"

@@ -1,8 +1,6 @@
 """Drive a relocated shipping game through real X11 keyboard input and presentation."""
 
 import argparse
-import ctypes
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,54 +12,7 @@ import time
 from BlockStackTests import state
 from ExportTests import export
 from GuiTests import close_window
-
-
-class WindowFrames:
-    """Read presented X11 pixels so keyboard timing does not assume a GPU speed."""
-
-    class Image(ctypes.Structure):
-        # Only the prefix used here is needed; Xlib owns and destroys the full XImage.
-        _fields_ = [("width", ctypes.c_int), ("height", ctypes.c_int),
-                    ("xoffset", ctypes.c_int), ("format", ctypes.c_int),
-                    ("data", ctypes.c_void_p), ("byte_order", ctypes.c_int),
-                    ("bitmap_unit", ctypes.c_int), ("bitmap_bit_order", ctypes.c_int),
-                    ("bitmap_pad", ctypes.c_int), ("depth", ctypes.c_int),
-                    ("bytes_per_line", ctypes.c_int), ("bits_per_pixel", ctypes.c_int)]
-
-    def __init__(self, window, width, height):
-        self.window, self.width, self.height = int(window), width, height
-        self.x11 = ctypes.CDLL("libX11.so.6")
-        self.x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
-        self.x11.XOpenDisplay.restype = ctypes.c_void_p
-        self.x11.XGetImage.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int,
-                                      ctypes.c_int, ctypes.c_uint, ctypes.c_uint,
-                                      ctypes.c_ulong, ctypes.c_int]
-        self.x11.XGetImage.restype = ctypes.POINTER(self.Image)
-        self.x11.XDestroyImage.argtypes = [ctypes.POINTER(self.Image)]
-        self.x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
-        self.display = self.x11.XOpenDisplay(None)
-        if not self.display:
-            raise RuntimeError("Cannot connect to the native runtime test display")
-
-    def close(self):
-        if self.display:
-            self.x11.XCloseDisplay(self.display)
-            self.display = None
-
-    def capture(self):
-        image = self.x11.XGetImage(self.display, self.window, 0, 0,
-                                  self.width, self.height, ctypes.c_ulong(-1), 2)
-        if not image:
-            raise RuntimeError("Cannot read the native runtime window")
-        try:
-            contents = image.contents
-            count = contents.bytes_per_line * contents.height
-            if not contents.data or not 0 < count <= 64 * 1024 * 1024:
-                raise RuntimeError("Native window returned invalid image dimensions")
-            pixels = ctypes.string_at(contents.data, count)
-            return hashlib.sha256(pixels).digest(), len(set(pixels)) > 8
-        finally:
-            self.x11.XDestroyImage(image)
+from NativeWindow import WindowFrames
 
 
 def main():

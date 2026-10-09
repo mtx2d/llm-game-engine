@@ -12,7 +12,7 @@ apt-get download cmake cmake-data ninja-build librhash0 libjsoncpp25 \
   libvulkan-dev libvulkan1 vulkan-tools vulkan-validationlayers \
   glslang-tools spirv-tools libx11-dev libx11-6 libxrandr-dev libxinerama-dev \
   libxcursor-dev libxi-dev libxrender-dev libxfixes-dev x11proto-dev \
-  libxext-dev libxcb1-dev libxau-dev libxdmcp-dev libasound2-dev xdotool libxdo3
+  libxext-dev libxcb1-dev libxau-dev libxdmcp-dev libasound2-dev libxdamage1 xdotool libxdo3
 for package in ./*.deb; do
   dpkg-deb -x "$package" "$asterRoot/.tools/sysroot"
 done

@@ -12,6 +12,9 @@ extern "C"
 }
 
 #define MINIAUDIO_IMPLEMENTATION
+// Device mode must fail when no native output backend is available. Offline
+// mixing explicitly sets noDevice and does not need miniaudio's silent backend.
+#define MA_NO_NULL
 #if defined(_WIN32) && !defined(NOMINMAX)
 #define NOMINMAX
 #endif
@@ -393,7 +396,10 @@ namespace Aster
 					configuration.channels = 2;
 					configuration.sampleRate = 48000;
 					const auto result = ma_engine_init(&configuration, &m_AudioEngine);
-					Require(result == MA_SUCCESS, "miniaudio initialization failed: " + std::to_string(result));
+					Require(result == MA_SUCCESS, std::string(settings.Audio == AudioMode::Device
+																  ? "miniaudio device initialization failed: "
+																  : "miniaudio offline initialization failed: ") +
+													  ma_result_description(result));
 					m_AudioInitialized = true;
 				}
 			}

@@ -23,7 +23,7 @@ build/debug/AsterRuntime --scene Assets/Scenes/FeatureGallery.aster --project As
 build/debug/AsterRuntime --scene Assets/Scenes/FeatureGallery.aster --project Assets --steps 120
 ```
 
-The graphical editor opens the feature scene. Use the hierarchy and inspector to author entities, double-click assets to attach them, and use the viewport gizmo to move, rotate, or scale. Right mouse plus WASD flies the editor camera; Q/E changes height. Play starts simulation; Stop restores the authored scene. Interactive play uses the audio device; `--audio offline` selects deterministic audio for editor testing.
+The graphical editor opens the feature scene. Use the hierarchy and inspector to author entities, click visible meshes in the viewport to select them, double-click assets to attach them, and use the gizmo to move, rotate, or scale. Each drag takes one Undo; Escape cancels it. Right mouse plus WASD flies the editor camera; Q/E changes height. Play starts simulation; Stop restores the authored scene. Interactive play uses a native audio device and reports initialization failures; `--audio offline` selects deterministic audio for editor testing.
 
 [BlockStack](docs/BlockStack.md) is a playable falling-block game authored through the same JSON commands available to AI agents. Open `Games/BlockStack/BlockStack.aster` and press Play, or pass that scene to the runtime. The example includes gameplay, prefab spawning, input, audio, and relocated export tests.
 

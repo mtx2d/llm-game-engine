@@ -1,4 +1,5 @@
 #include <Aster/Simulation/Simulation.h>
+#include <miniaudio.h>
 
 #include <algorithm>
 #include <chrono>
@@ -684,6 +685,16 @@ namespace
 
 void RunSimulationTests()
 {
+	// Exercise the implementation linked into Aster: fallback to a silent device
+	// must be unavailable even when explicitly requested. Offline mixing is tested below.
+	ma_context context{};
+	const ma_backend silentBackend = ma_backend_null;
+	const auto result = ma_context_init(&silentBackend, 1, nullptr, &context);
+	if (result == MA_SUCCESS)
+	{
+		ma_context_uninit(&context);
+	}
+	Check(result == MA_NO_BACKEND, "device audio accepted a silent fallback backend");
 	const TestAssets assets;
 	TestPhysics(assets);
 	TestDeterminismAndHierarchy(assets);
