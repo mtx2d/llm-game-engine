@@ -73,6 +73,86 @@ namespace
 			throw std::runtime_error(diagnostic);
 		}
 	}
+
+	void TestNativeWindowLifecycle(Aster::Renderer& renderer)
+	{
+#if defined(_WIN32) || defined(__APPLE__)
+		auto* window = static_cast<GLFWwindow*>(renderer.GetNativeWindow());
+		Require(window != nullptr, "Native lifecycle test requires the renderer's owned window");
+		const auto waitFor = [&](const auto& ready, const char* message)
+		{
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+			do
+			{
+				renderer.PollEvents();
+				Require(!renderer.ShouldClose(), "Native lifecycle window unexpectedly closed");
+				if (ready())
+				{
+					return;
+				}
+				std::this_thread::sleep_for(std::chrono::milliseconds(10));
+			} while (std::chrono::steady_clock::now() < deadline);
+			throw std::runtime_error(message);
+		};
+		const auto drawable = [&]()
+		{
+			int width = 0;
+			int height = 0;
+			glfwGetFramebufferSize(window, &width, &height);
+			return glfwGetWindowAttrib(window, GLFW_VISIBLE) == GLFW_TRUE &&
+				   glfwGetWindowAttrib(window, GLFW_ICONIFIED) == GLFW_FALSE && width > 0 && height > 0;
+		};
+		const auto requirePresentedColor = [&](const std::array<float, 4>& color)
+		{
+			renderer.RenderFrame(color);
+			int width = 0;
+			int height = 0;
+			glfwGetFramebufferSize(window, &width, &height);
+			Require(width > 0 && height > 0 && renderer.GetWidth() == static_cast<uint32_t>(width) &&
+						renderer.GetHeight() == static_cast<uint32_t>(height),
+					"Restored swapchain dimensions differ from the native framebuffer");
+			RequireColor(renderer.ReadbackRgba8(), static_cast<uint32_t>(width), static_cast<uint32_t>(height), color);
+			RequireClean(renderer);
+		};
+
+		// A real desktop window manager must acknowledge these transitions. A
+		// synthetic framebuffer resize alone does not exercise minimized surfaces.
+		renderer.Resize(320, 240);
+		glfwShowWindow(window);
+		waitFor(drawable, "Native window did not become drawable after showing");
+		requirePresentedColor({0.125f, 0.25f, 0.5f, 1});
+		glfwIconifyWindow(window);
+		waitFor([&]() { return glfwGetWindowAttrib(window, GLFW_ICONIFIED) == GLFW_TRUE; },
+				"Window manager did not minimize the owned GLFW window");
+		std::cout << "Rendering while native GLFW window is minimized\n" << std::flush;
+		// RendererWindow's CTest timeout also bounds a driver call that stalls;
+		// the event-loop deadlines above cannot interrupt Vulkan safely.
+		renderer.RenderFrame({0.75f, 0.125f, 0.25f, 1});
+		Require(glfwGetWindowAttrib(window, GLFW_ICONIFIED) == GLFW_TRUE && !renderer.ShouldClose(),
+				"Rendering unexpectedly restored or closed the minimized window");
+		RequireClean(renderer);
+		glfwRestoreWindow(window);
+		waitFor(drawable, "Native window did not become drawable after restoring");
+		requirePresentedColor({0.25f, 0.75f, 0.125f, 1});
+		renderer.Resize(352, 256);
+		waitFor(
+			[&]()
+			{
+				int width = 0;
+				int height = 0;
+				glfwGetWindowSize(window, &width, &height);
+				return drawable() && width == 352 && height == 256;
+			},
+			"Restored native window did not accept its subsequent resize");
+		requirePresentedColor({0.625f, 0.25f, 0.875f, 1});
+		glfwHideWindow(window);
+		renderer.PollEvents();
+		std::cout << "Validated native show, minimize, minimized frame, restore, resize and readback\n";
+#else
+		(void)renderer;
+		std::cout << "Native minimize/restore omitted on Linux: the Xvfb harness has no window manager\n";
+#endif
+	}
 } // namespace
 
 void RunRendererTests()
@@ -90,7 +170,14 @@ void RunRendererTests()
 	Aster::RendererOptions options;
 	options.Width = 37;
 	options.Height = 23;
+#ifdef _MSC_VER
+	size_t windowFlagSize = 0;
+	Require(getenv_s(&windowFlagSize, nullptr, 0, "ASTER_TEST_WINDOW") == 0,
+			"Reading the native window test environment failed");
+	options.Headless = windowFlagSize == 0;
+#else
 	options.Headless = std::getenv("ASTER_TEST_WINDOW") == nullptr;
+#endif
 	options.Visible = false;
 	auto unavailableDevice = options;
 	unavailableDevice.DeviceName = "Aster nonexistent GPU used to test initialization cleanup";
@@ -202,6 +289,10 @@ void RunRendererTests()
 	RequireColor(renderer.ReadbackRgba8(), 61, 17, resizedColor);
 	RequireColor(renderer.ReadbackRgba8(), 61, 17, resizedColor);
 	RequireClean(renderer);
+	if (!options.Headless)
+	{
+		TestNativeWindowLifecycle(renderer);
+	}
 
 	renderer.Shutdown();
 	renderer.Shutdown();
@@ -445,7 +536,7 @@ namespace
 		for (const auto type : {Aster::LightType::Directional, Aster::LightType::Point, Aster::LightType::Spot})
 		{
 			scene.Get(light).Light->Type = type;
-			scene.Get(light).Light->Intensity = type == Aster::LightType::Directional ? 3 : 25;
+			scene.Get(light).Light->Intensity = type == Aster::LightType::Directional ? 3.0f : 25.0f;
 			scene.Get(light).Transform.Translation = {1.5f, 0, 2};
 			scene.Get(light).Transform.Rotation.y = 0.5f;
 			scene.Get(light).Light->OuterCone = 55;

@@ -14,6 +14,13 @@ struct TestFailure: Error, CustomStringConvertible
 	let description: String
 }
 
+struct AccessibilityFailure: Error, CustomStringConvertible
+{
+	let result: AXError
+	let operation: String
+	var description: String { "\(operation) failed with AX error \(result.rawValue)" }
+}
+
 func Require(_ condition: @autoclosure () throws -> Bool, _ message: String) throws
 {
 	if try condition() == false
@@ -24,7 +31,7 @@ func Require(_ condition: @autoclosure () throws -> Bool, _ message: String) thr
 
 func RequireAX(_ result: AXError, _ operation: String) throws
 {
-	try Require(result == .success, "\(operation) failed with AX error \(result.rawValue)")
+	if result != .success { throw AccessibilityFailure(result: result, operation: operation) }
 }
 
 func Attribute(_ element: AXUIElement, _ name: String) throws -> CFTypeRef
@@ -93,9 +100,9 @@ final class GameWindow
 	let pid: pid_t
 	let executable: URL
 	let application: AXUIElement
-	let system: AXUIElement
 	var window: SCWindow?
 	var accessibilityWindow: AXUIElement?
+	var focusRetries = 0
 
 	init(pid: pid_t, executable: URL) throws
 	{
@@ -103,9 +110,11 @@ final class GameWindow
 		self.pid = pid
 		self.executable = executable.resolvingSymlinksInPath()
 		application = AXUIElementCreateApplication(pid)
-		system = AXUIElementCreateSystemWide()
+		// The system-wide element sets the default bound for derived window and
+		// close-button AX objects too. It is not used to query foreground focus.
+		let timeoutScope = AXUIElementCreateSystemWide()
+		try RequireAX(AXUIElementSetMessagingTimeout(timeoutScope, 2), "Set global AX timeout")
 		try RequireAX(AXUIElementSetMessagingTimeout(application, 2), "Set application AX timeout")
-		try RequireAX(AXUIElementSetMessagingTimeout(system, 2), "Set system AX timeout")
 	}
 
 	func CheckAlive() throws
@@ -140,21 +149,34 @@ final class GameWindow
 				try RequireAX(AXUIElementSetAttributeValue(application, kAXFrontmostAttribute as CFString,
 					kCFBooleanTrue), "Activate launched game")
 				let focusDeadline = ProcessInfo.processInfo.systemUptime + 5
+				var lastObservation = "The launched game has not become frontmost"
 				while ProcessInfo.processInfo.systemUptime < focusDeadline
 				{
-					try CheckAlive()
-					let focusedApp = try ElementAttribute(system, kAXFocusedApplicationAttribute)
-					if try Owner(focusedApp) == pid
-					{
-						let focused = try ElementAttribute(application, kAXFocusedWindowAttribute)
-						try Require(try Owner(focused) == pid, "Focused window belongs to another process")
-						try MatchWindow(focused, candidate)
-						accessibilityWindow = focused
-						return
-					}
+					// Let AppKit process activation before reading its foreground state.
 					try await Task.sleep(nanoseconds: 20_000_000)
+					try CheckAlive()
+					if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+					{
+						do
+						{
+							let focused = try ElementAttribute(application, kAXFocusedWindowAttribute)
+							try Require(try Owner(focused) == pid, "Focused window belongs to another process")
+							try MatchWindow(focused, candidate)
+							accessibilityWindow = focused
+							return
+						}
+						catch let error as AccessibilityFailure
+						{
+							// An app can temporarily have no focused window or be unable to
+							// answer AX messages while activation/window creation completes.
+							guard error.result == .cannotComplete || error.result == .noValue else { throw error }
+							lastObservation = error.description
+							focusRetries += 1
+						}
+					}
 				}
-				throw TestFailure(description: "Cannot focus the launched game; no keyboard input was sent")
+				throw TestFailure(description:
+					"Cannot focus the launched game; no keyboard input was sent. Last observation: \(lastObservation)")
 			}
 			try await Task.sleep(nanoseconds: 20_000_000)
 		}
@@ -180,9 +202,10 @@ final class GameWindow
 	{
 		try CheckAlive()
 		guard let window, let accessibilityWindow else { throw TestFailure(description: "No selected game window") }
-		let focusedApp = try ElementAttribute(system, kAXFocusedApplicationAttribute)
+		// AppKit defines frontmostApplication as the application receiving key
+		// events. AX separately proves which owned window holds keyboard focus.
+		try Require(NSWorkspace.shared.frontmostApplication?.processIdentifier == pid, "Game lost foreground focus")
 		let focusedWindow = try ElementAttribute(application, kAXFocusedWindowAttribute)
-		try Require(try Owner(focusedApp) == pid, "Game lost foreground focus")
 		try Require(try Owner(focusedWindow) == pid, "Keyboard focus belongs to another process")
 		try Require(CFEqual(focusedWindow, accessibilityWindow), "Game keyboard focus moved to another window")
 		let options: CGWindowListOption = [.optionIncludingWindow]
@@ -312,7 +335,8 @@ struct NativeInput
 			try before.Save(artifacts.appendingPathComponent("MacOSRuntimeInputBefore.ppm"))
 			try after.Save(artifacts.appendingPathComponent("MacOSRuntimeInputAfter.ppm"))
 			let result: [String: Any] = ["pid": pid, "window_id": game.window!.windowID, "permissions": permissions,
-				"before_sha256": before.digest, "after_sha256": after.digest, "close_requested": true]
+				"before_sha256": before.digest, "after_sha256": after.digest, "close_requested": true,
+				"focus_retries": game.focusRetries]
 			try WriteJSON(result)
 		}
 		catch

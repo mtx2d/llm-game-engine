@@ -31,6 +31,20 @@ def region(image, rectangle):
                     for row in range(top, bottom))
 
 
+def sample_region(image, rectangle, columns=64, rows=40):
+    """Compare a fixed grid even when the desktop constrains two window sizes differently."""
+    width, height, pixels = image
+    left, top, right, bottom = rectangle
+    samples = []
+    for row in range(rows):
+        y = int((top + (row + 0.5) * (bottom - top) / rows) * height / 900)
+        for column in range(columns):
+            x = int((left + (column + 0.5) * (right - left) / columns) * width / 1440)
+            offset = (y * width + x) * 3
+            samples.append(tuple(pixels[offset:offset + 3]))
+    return samples
+
+
 def main():
     parser = argparse.ArgumentParser()
     for name in ("editor", "assets", "artifacts"):
@@ -72,10 +86,14 @@ def main():
                               for pixel in zip(sidebar[0::3], sidebar[1::3], sidebar[2::3]))
             assert bright_text > 100, f"{name}: native GUI hierarchy text was not rendered"
             assert scene_path.read_bytes() == original_scene, "Editor play overwrote the authored scene"
-            views.append(viewport)
-        assert len(views[0]) == len(views[1])
-        assert sum(first != second for first, second in zip(*views)) > 500, \
-            "Editor did not switch from its authoring camera to the scene's play camera"
+            views.append(sample_region(image, (270, 115, 1090, 600)))
+        # Cocoa can constrain successive requested 1440x900 windows to slightly
+        # different framebuffers (observed 1024x653 and 1024x656). Require a
+        # substantive visual difference, not mismatched dimensions or rounding.
+        changed = sum(sum(abs(a - b) for a, b in zip(first, second)) > 30
+                      for first, second in zip(*views))
+        assert changed > len(views[0]) * 0.05, \
+            f"Editor play view lacks distinct rendered content: {changed}/{len(views[0])} samples changed"
 
         scene = json.loads(original_scene)
         for entity in scene["Entities"]:

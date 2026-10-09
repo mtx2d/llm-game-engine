@@ -68,6 +68,13 @@ if(UNIX)
   target_link_libraries(AsterLua PUBLIC m ${CMAKE_DL_LIBS})
 endif()
 
+if(MSVC)
+  # Bullet and GLFW share this legacy option. Bullet defaults it OFF, causing
+  # GLFW to force /MT while Aster uses CMake's /MD default. Disable their legacy
+  # overrides and let every target inherit CMAKE_MSVC_RUNTIME_LIBRARY instead;
+  # an explicitly selected parent /MT remains supported through that property.
+  set(USE_MSVC_RUNTIME_LIBRARY_DLL ON CACHE BOOL "Follow the parent MSVC runtime selection" FORCE)
+endif()
 set(BUILD_BULLET2_DEMOS OFF CACHE BOOL "" FORCE)
 set(BUILD_CPU_DEMOS OFF CACHE BOOL "" FORCE)
 set(BUILD_OPENGL3_DEMOS OFF CACHE BOOL "" FORCE)

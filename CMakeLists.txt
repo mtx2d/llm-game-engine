@@ -147,9 +147,22 @@ if(ASTER_BUILD_TESTS)
     aster_target(AsterRendererTests)
     add_test(NAME Renderer COMMAND AsterRendererTests)
     set_tests_properties(Renderer PROPERTIES TIMEOUT 60 LABELS "gpu")
+    if(WIN32 OR APPLE)
+      add_test(NAME RendererWindow COMMAND AsterRendererTests)
+      set_tests_properties(RendererWindow PROPERTIES
+        ENVIRONMENT "ASTER_TEST_WINDOW=1" TIMEOUT 120 LABELS "gpu;window")
+    elseif(UNIX)
+      find_program(ASTER_XVFB_RUN xvfb-run)
+      if(ASTER_XVFB_RUN)
+        add_test(NAME RendererWindow COMMAND "${ASTER_XVFB_RUN}" -a
+          -s "-screen 0 1280x1024x24 -noreset" "${CMAKE_COMMAND}" -E env
+          ASTER_TEST_WINDOW=1 "$<TARGET_FILE:AsterRendererTests>")
+        set_tests_properties(RendererWindow PROPERTIES TIMEOUT 120 LABELS "gpu;window")
+      endif()
+    endif()
     if(WIN32)
       # The pinned Windows CI software Vulkan ICD needs more time for image tests.
-      set_tests_properties(Renderer PROPERTIES TIMEOUT 300)
+      set_tests_properties(Renderer RendererWindow PROPERTIES TIMEOUT 300)
       add_test(NAME RuntimeInput COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/Tests/WindowsRuntimeInputTests.py"
         --editor "$<TARGET_FILE:AsterEditor>" --runtime "$<TARGET_FILE:AsterRuntime>"

@@ -35,12 +35,8 @@ jobs:
         run: cmake --preset debug -DASTER_ASSET_CORPUS="$PWD/build/asset-corpus"
       - name: Build
         run: cmake --build --preset debug --parallel 3
-      - name: Test CPU and headless Vulkan
+      - name: Test CPU, headless Vulkan and GLFW presentation
         run: ctest --preset debug
-      - name: Test GLFW swapchain
-        # Repeated renderer shutdown/init must not reset the test X server when
-        # the last client disconnects between lifetime assertions.
-        run: xvfb-run -a -s '-screen 0 1280x1024x24 -noreset' env ASTER_TEST_WINDOW=1 build/debug/AsterRendererTests
       - name: Preserve Vulkan and editor evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -93,14 +89,10 @@ jobs:
           python3 scripts/FetchAssetCorpus.py
           cmake -S . -B build/macos -G Ninja -DCMAKE_BUILD_TYPE=Debug -DASTER_ASSET_CORPUS="$PWD/build/asset-corpus"
           cmake --build build/macos --parallel 3
-      - name: Test native CPU and MoltenVK output
+      - name: Test native CPU, MoltenVK output and GLFW presentation
         run: |
           source build/macos-vulkan/Environment.sh
           ctest --test-dir build/macos --output-on-failure
-      - name: Test GLFW Metal presentation
-        run: |
-          source build/macos-vulkan/Environment.sh
-          ASTER_TEST_WINDOW=1 build/macos/AsterRendererTests
       - name: Test relocated macOS application bundle
         run: |
           source build/macos-vulkan/Environment.sh
@@ -155,14 +147,8 @@ jobs:
           cmake --build build/windows-native --config Release --parallel 3
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item -LiteralPath $env:ASTER_VULKAN_LOADER -Destination build/windows-native/Release/vulkan-1.dll
-      - name: Test native CPU and Vulkan output
+      - name: Test native CPU, Vulkan output and GLFW presentation
         run: ctest --test-dir build/windows-native -C Release --output-on-failure
-      - name: Test GLFW Win32 presentation
-        shell: pwsh
-        run: |
-          $env:ASTER_TEST_WINDOW = '1'
-          & build/windows-native/Release/AsterRendererTests.exe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test relocated graphical Windows export
         run: >-
           python Tests/ExportTests.py --editor build/windows-native/Release/AsterEditor.exe
