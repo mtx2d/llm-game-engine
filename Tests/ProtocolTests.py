@@ -52,8 +52,28 @@ with tempfile.TemporaryDirectory(prefix="AsterProtocol-") as temporary:
     )
     assert process.returncode == 1, process.stdout + process.stderr
     assert any("teardown sentinel" in error for error in json.loads(process.stdout)["errors"])
+
+    # EOF also ends an active editor play session. It must execute OnDestroy
+    # before reporting success, without emitting an unsolicited JSON response.
+    requests = [{"command": "scene.load", "path": "Scene.aster"},
+                {"command": "simulation.start", "audio": "offline"}]
+    for script, expected_code in (
+        ('return {OnDestroy=function(self, entity) error("editor teardown sentinel") end}', 1),
+        ('return {OnDestroy=function(self, entity) engine.set_name(entity, "Stopped") end}', 0),
+    ):
+        (project / "Teardown.lua").write_text(script, encoding="utf-8")
+        process = subprocess.run(
+            [editor, "--automation", str(project)],
+            input="\n".join(json.dumps(request) for request in requests) + "\n",
+            text=True, capture_output=True, timeout=30,
+        )
+        assert process.returncode == expected_code, process.stdout + process.stderr
+        results = [json.loads(line) for line in process.stdout.splitlines()]
+        assert len(results) == 2 and all(result["ok"] for result in results), results
+        assert results[1]["result"]["errors"] == [], "Teardown ran before EOF"
+        assert ("editor teardown sentinel" in process.stderr) == (expected_code == 1)
     for value in ("nan", "2.5", "-1", "1000001", "3junk"):
         process = subprocess.run([runtime, "--steps", value], text=True, capture_output=True, timeout=30)
         assert process.returncode != 0
 
-print("Editor protocol recovery, persistence, runtime simulation, and teardown errors passed")
+print("Editor protocol recovery, persistence, simulation, and runtime/editor EOF teardown errors passed")

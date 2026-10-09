@@ -27,6 +27,8 @@ The graphical editor opens the feature scene. Use the hierarchy and inspector to
 
 [BlockStack](docs/BlockStack.md) is a playable falling-block game authored through the same JSON commands available to AI agents. Open `Games/BlockStack/BlockStack.aster` and press Play, or pass that scene to the runtime. The example includes gameplay, prefab spawning, input, audio, and relocated export tests.
 
+`Scenes/AudioValidation.aster` cycles a tone through left, center, right, far, and silent stages, two seconds each. Its offline PCM test checks channel balance, attenuation, silence and repeat. To exercise an actual output device, run `build/debug/AsterRuntime --scene Assets/Scenes/AudioValidation.aster --project Assets` without `--steps`, using stereo speakers or headphones. Physical listening results remain unverified. [FeatureCoverage.md](docs/FeatureCoverage.md) maps every component and Lua binding to its scene and behavioral assertions.
+
 The editor also accepts JSON lines as documented in [Automation.md](docs/Automation.md). The runtime opens a game window by default; `--steps` selects deterministic headless execution. [Export.md](docs/Export.md) describes packaging and runtime arguments. Renderer tests use a real Vulkan device and validate pixel readback. Native GUI interaction checks require a display, X11, and `xdotool`:
 
 ```sh
@@ -43,7 +45,7 @@ cmake --build --preset debug --parallel 4
 ctest --preset debug -R AssetCorpus
 ```
 
-Native Windows and macOS CPU suites pass CI. Linux Vulkan CI also passes all 15 integrated tests and the separate GLFW presentation check. Graphics validation uses `scripts/SetupWindowsVulkan.ps1` on Windows and `scripts/BootstrapMacOS.sh` on macOS; both fetch verified toolchains into `build/`. Run Windows setup in a non-elevated PowerShell 7 shell; its automatic driver registration is restricted to ephemeral GitHub-hosted runners. The Windows CI driver is SwiftShader software Vulkan. The macOS toolchain uses MoltenVK and requires a Metal-capable device. Native macOS foundation GPU checks passed on Apple's paravirtual device; scene rendering and the new `.app` export still require the corrected CI run. These scripts prepare dependencies; platform graphics and shipping support require the executable checks recorded in the implementation status.
+Native Windows and macOS CPU suites pass CI. Linux Vulkan CI passes its integrated tests and separate GLFW presentation check. Graphics validation uses `scripts/SetupWindowsVulkan.ps1` on Windows and `scripts/BootstrapMacOS.sh` on macOS; both fetch verified toolchains into `build/`. Run Windows setup in a non-elevated PowerShell 7 shell; its automatic driver registration is restricted to ephemeral GitHub-hosted runners. The Windows CI driver is SwiftShader software Vulkan. The macOS toolchain uses MoltenVK and requires a Metal-capable device. Native macOS scene rendering, GLFW presentation, and relocated `.app` execution passed on Apple's paravirtual device, including launch without development SDK paths. Broader editor interaction, audio, and release gates remain in the implementation status.
 
 ## Development
 

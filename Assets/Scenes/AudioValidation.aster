@@ -1,0 +1,70 @@
+{
+  "Version": 1,
+  "Name": "Audio Validation - Left, Center, Right, Far, Silent (2 seconds each)",
+  "Entities": [
+    {
+      "ID": 1,
+      "Name": "Listener: origin, facing -Z",
+      "Parent": null,
+      "Transform": {
+        "Translation": [0, 0, 0],
+        "Rotation": [0, 0, 0],
+        "Scale": [1, 1, 1]
+      },
+      "Camera": {
+        "VerticalFov": 80,
+        "NearClip": 0.1,
+        "FarClip": 100,
+        "Primary": true
+      }
+    },
+    {
+      "ID": 2,
+      "Name": "AudioValidation: LEFT",
+      "Parent": null,
+      "Transform": {
+        "Translation": [-2, 0, -2],
+        "Rotation": [0, 0, 0],
+        "Scale": [0.25, 0.25, 0.25]
+      },
+      "MeshRenderer": {
+        "Mesh": "Models/Sphere.gltf",
+        "BaseColor": [0.25, 0.65, 1, 1],
+        "Metallic": 0,
+        "Roughness": 0.7,
+        "Visible": true
+      },
+      "Script": {
+        "Path": "Scripts/AudioValidation.lua",
+        "Enabled": true
+      },
+      "AudioSource": {
+        "Path": "Audio/Feature.wav",
+        "Volume": 0.35,
+        "Pitch": 1,
+        "Loop": true,
+        "PlayOnStart": true,
+        "Spatial": true
+      }
+    },
+    {
+      "ID": 3,
+      "Name": "Light",
+      "Parent": null,
+      "Transform": {
+        "Translation": [0, 0, 0],
+        "Rotation": [-0.5, -0.5, 0],
+        "Scale": [1, 1, 1]
+      },
+      "Light": {
+        "Type": "Directional",
+        "Color": [1, 1, 1],
+        "Intensity": 3,
+        "Range": 10,
+        "InnerCone": 20,
+        "OuterCone": 30,
+        "CastShadows": false
+      }
+    }
+  ]
+}

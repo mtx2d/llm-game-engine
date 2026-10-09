@@ -38,7 +38,9 @@ jobs:
       - name: Test CPU and headless Vulkan
         run: ctest --preset debug
       - name: Test GLFW swapchain
-        run: xvfb-run -a env ASTER_TEST_WINDOW=1 build/debug/AsterRendererTests
+        # Repeated renderer shutdown/init must not reset the test X server when
+        # the last client disconnects between lifetime assertions.
+        run: xvfb-run -a -s '-screen 0 1280x1024x24 -noreset' env ASTER_TEST_WINDOW=1 build/debug/AsterRendererTests
       - name: Preserve Vulkan and editor evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -47,6 +49,7 @@ jobs:
           path: |
             build/debug/Testing/Temporary/*.log
             build/debug/gui-evidence/*
+            build/debug/editor-render-evidence/*
             build/debug/runtime-input-evidence/*
             build/debug/asset-corpus-evidence/*
   macos-vulkan:
@@ -87,7 +90,8 @@ jobs:
       - name: Configure and build native editor and runtime
         run: |
           source build/macos-vulkan/Environment.sh
-          cmake -S . -B build/macos -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          python3 scripts/FetchAssetCorpus.py
+          cmake -S . -B build/macos -G Ninja -DCMAKE_BUILD_TYPE=Debug -DASTER_ASSET_CORPUS="$PWD/build/asset-corpus"
           cmake --build build/macos --parallel 3
       - name: Test native CPU and MoltenVK output
         run: |
@@ -110,6 +114,10 @@ jobs:
           path: |
             build/macos-evidence/*
             build/macos/Testing/Temporary/*.log
+            build/macos/editor-render-evidence/*
+            build/macos/asset-corpus-evidence/*
+            build/macos/runtime-input-evidence/*
+            !build/macos/runtime-input-evidence/NativeHelper/**
             build/macos-vulkan/build/*/CMakeFiles/CMakeConfigureLog.yaml
   windows-vulkan:
     runs-on: windows-2022
@@ -140,7 +148,9 @@ jobs:
       - name: Configure and build native editor and runtime
         shell: pwsh
         run: |
-          cmake -S . -B build/windows-native -A x64 -DASTER_BUILD_RENDERER=ON -DASTER_BUILD_GUI=ON
+          python scripts/FetchAssetCorpus.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake -S . -B build/windows-native -A x64 -DASTER_BUILD_RENDERER=ON -DASTER_BUILD_GUI=ON "-DASTER_ASSET_CORPUS=$pwd/build/asset-corpus"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build/windows-native --config Release --parallel 3
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -166,6 +176,8 @@ jobs:
             build/windows-vulkan/evidence/*
             build/windows-native/Testing/Temporary/*.log
             build/windows-native/runtime-input-evidence/*
+            build/windows-native/editor-render-evidence/*
+            build/windows-native/asset-corpus-evidence/*
   sanitizers:
     runs-on: ubuntu-24.04
     steps:

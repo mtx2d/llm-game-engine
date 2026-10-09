@@ -2,6 +2,7 @@
 #include <miniaudio.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -490,6 +491,94 @@ namespace
 		Rejects([&] { (void)simulation.RenderAudio(0); }, "zero frame audio block");
 	}
 
+	void TestAudioValidationScene()
+	{
+		const auto assetRoot = std::filesystem::path(ASTER_SOURCE_DIR) / "Assets";
+		auto scene = Scene::Load(assetRoot / "Scenes/AudioValidation.aster");
+		const auto listener = scene.FindByID(1);
+		const auto source = scene.FindByID(2);
+		Check(scene.Get(listener).Camera && scene.Get(listener).Camera->Primary &&
+				  scene.Get(listener).Transform.Translation == glm::vec3(0) &&
+				  scene.Get(listener).Transform.Rotation == glm::vec3(0),
+			  "audio fixture listener must stay at the origin facing -Z");
+		Check(scene.Get(source).AudioSource && scene.Get(source).AudioSource->Spatial &&
+				  scene.Get(source).AudioSource->Loop && scene.Get(source).AudioSource->PlayOnStart,
+			  "audio fixture must start a looping spatial source");
+		Simulation simulation(scene, assetRoot, {.FixedTimeStep = 1.0 / 60.0, .Audio = AudioMode::Offline});
+		simulation.Start();
+		AssertNoScriptErrors(simulation);
+		Check(simulation.IsAudioPlaying(source), "audio fixture PlayOnStart did not start playback");
+
+		struct ChannelLevels
+		{
+			double Left = 0;
+			double Right = 0;
+			double Peak = 0;
+		};
+		std::array<ChannelLevels, 6> levels{};
+		const std::array<std::string, 6> stages = {"LEFT", "CENTER", "RIGHT", "FAR", "SILENT", "LEFT"};
+		for (std::size_t stage = 0; stage < stages.size(); ++stage)
+		{
+			auto& level = levels[stage];
+			std::size_t measuredFrames = 0;
+			for (std::size_t step = 0; step < 120; ++step)
+			{
+				Check(scene.Get(source).Name == "AudioValidation: " + stages[stage],
+					  "audio fixture changed stage before or after its two-second boundary");
+				// 800 stereo frames at 48 kHz exactly match one fixed simulation step.
+				const auto samples = simulation.RenderAudio(800);
+				Check(samples.size() == 1600, "audio fixture PCM block has an unexpected channel count");
+				for (std::size_t frame = 0; frame < 800; ++frame)
+				{
+					const double left = samples[frame * 2];
+					const double right = samples[frame * 2 + 1];
+					Check(std::isfinite(left) && std::isfinite(right), "audio fixture produced nonfinite PCM");
+					// Exclude the short gain/pan smoothing tail after each stage transition.
+					if (step >= 4)
+					{
+						level.Left += left * left;
+						level.Right += right * right;
+						level.Peak = std::max({level.Peak, std::abs(left), std::abs(right)});
+						++measuredFrames;
+					}
+				}
+				simulation.Step();
+			}
+			level.Left = std::sqrt(level.Left / static_cast<double>(measuredFrames));
+			level.Right = std::sqrt(level.Right / static_cast<double>(measuredFrames));
+			AssertNoScriptErrors(simulation);
+			Check(simulation.IsAudioPlaying(source), "audio fixture loop stopped during a stage");
+		}
+		const auto& left = levels[0];
+		const auto& center = levels[1];
+		const auto& right = levels[2];
+		const auto& far = levels[3];
+		const auto& silent = levels[4];
+		Check(center.Left > 0.005 && center.Right > 0.005 && center.Peak < 0.25,
+			  "audio fixture center should be audible at a moderate level");
+		Check(left.Left > left.Right * 1.5 && right.Right > right.Left * 1.5,
+			  "spatial audio fixture does not favor the expected left/right channels");
+		Check(std::abs(center.Left - center.Right) < center.Left * 0.02,
+			  "centered audio fixture has unbalanced stereo channels");
+		Check(std::abs(left.Left - right.Right) < left.Left * 0.03 &&
+				  std::abs(left.Right - right.Left) < right.Left * 0.03,
+			  "mirrored audio positions did not produce mirrored channel levels");
+		Check(far.Left > center.Left * 0.02 && far.Left < center.Left * 0.25 && far.Right > center.Right * 0.02 &&
+				  far.Right < center.Right * 0.25,
+			  "distant audio fixture must be quieter, with nonzero attenuated output");
+		Check(silent.Peak < 0.000001, "audio fixture silent stage still produces PCM");
+		Check(std::abs(levels[5].Left - left.Left) < left.Left * 0.03 &&
+				  std::abs(levels[5].Right - left.Right) < left.Right * 0.03,
+			  "audio fixture did not restore spatial playback after its silent stage");
+		Check(scene.Get(source).Name == "AudioValidation: CENTER" && simulation.GetLog().size() == 7,
+			  "audio fixture did not repeat the complete five-stage sequence");
+		simulation.Stop();
+		simulation.Start();
+		AssertNoScriptErrors(simulation);
+		Check(scene.Get(source).Name == "AudioValidation: LEFT" && simulation.IsAudioPlaying(source),
+			  "restarting the audio fixture did not reset its stage and playback");
+	}
+
 	void TestFeatureGallery(const TestAssets& assets)
 	{
 		Scene scene;
@@ -704,6 +793,7 @@ void RunSimulationTests()
 	TestCollisionCallbacks(assets);
 	TestSelfRemovalAndDestroyMutation(assets);
 	TestAudio(assets);
+	TestAudioValidationScene();
 	TestFeatureGallery(assets);
 	TestInputEvents(assets);
 	TestLuaMemoryLimits(assets);

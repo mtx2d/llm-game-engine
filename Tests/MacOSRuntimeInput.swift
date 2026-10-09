@@ -1,0 +1,332 @@
+// Native test driver only; the engine and shipping runtime do not depend on Swift.
+// Public API references:
+// https://developer.apple.com/documentation/coregraphics/cgevent/posttopid(_:)
+// https://developer.apple.com/documentation/screencapturekit/scscreenshotmanager
+import AppKit
+import ApplicationServices
+import CryptoKit
+import Darwin
+import Foundation
+import ScreenCaptureKit
+
+struct TestFailure: Error, CustomStringConvertible
+{
+	let description: String
+}
+
+func Require(_ condition: @autoclosure () throws -> Bool, _ message: String) throws
+{
+	if try condition() == false
+	{
+		throw TestFailure(description: message)
+	}
+}
+
+func RequireAX(_ result: AXError, _ operation: String) throws
+{
+	try Require(result == .success, "\(operation) failed with AX error \(result.rawValue)")
+}
+
+func Attribute(_ element: AXUIElement, _ name: String) throws -> CFTypeRef
+{
+	var value: CFTypeRef?
+	try RequireAX(AXUIElementCopyAttributeValue(element, name as CFString, &value), name)
+	guard let value else { throw TestFailure(description: "Missing accessibility attribute \(name)") }
+	return value
+}
+
+func ElementAttribute(_ element: AXUIElement, _ name: String) throws -> AXUIElement
+{
+	let value = try Attribute(element, name)
+	try Require(CFGetTypeID(value) == AXUIElementGetTypeID(), "\(name) is not an accessibility element")
+	return value as! AXUIElement
+}
+
+func Owner(_ element: AXUIElement) throws -> pid_t
+{
+	var pid: pid_t = 0
+	try RequireAX(AXUIElementGetPid(element, &pid), "AXUIElementGetPid")
+	return pid
+}
+
+func Permissions() -> [String: Bool]
+{
+	// None of these APIs requests permission or changes system settings.
+	return ["accessibility": AXIsProcessTrusted(), "post_event": CGPreflightPostEventAccess(),
+			"screen_capture": CGPreflightScreenCaptureAccess()]
+}
+
+func CheckPermissions(_ permissions: [String: Bool]) throws
+{
+	let missing = permissions.filter { !$0.value }.map { $0.key }.sorted()
+	try Require(missing.isEmpty,
+		"Required macOS permissions are absent: \(missing.joined(separator: ", ")). " +
+		"No permission prompt or TCC change was attempted; native gameplay is unverified.")
+}
+
+func WriteJSON(_ object: Any) throws
+{
+	var data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+	data.append(0x0A)
+	try FileHandle.standardOutput.write(contentsOf: data)
+}
+
+struct Frame
+{
+	let width: Int
+	let height: Int
+	let pixels: Data
+	var digest: String { Data(SHA256.hash(data: pixels)).base64EncodedString() }
+	var populated: Bool { Set(pixels).count > 32 }
+
+	func Save(_ path: URL) throws
+	{
+		var file = Data("P6\n\(width) \(height)\n255\n".utf8)
+		file.append(pixels)
+		try file.write(to: path)
+	}
+}
+
+@MainActor
+final class GameWindow
+{
+	let pid: pid_t
+	let executable: URL
+	let application: AXUIElement
+	let system: AXUIElement
+	var window: SCWindow?
+	var accessibilityWindow: AXUIElement?
+
+	init(pid: pid_t, executable: URL) throws
+	{
+		try Require(pid > 1 && pid != getpid(), "Refusing an invalid or self PID")
+		self.pid = pid
+		self.executable = executable.resolvingSymlinksInPath()
+		application = AXUIElementCreateApplication(pid)
+		system = AXUIElementCreateSystemWide()
+		try RequireAX(AXUIElementSetMessagingTimeout(application, 2), "Set application AX timeout")
+		try RequireAX(AXUIElementSetMessagingTimeout(system, 2), "Set system AX timeout")
+	}
+
+	func CheckAlive() throws
+	{
+		try Require(kill(pid, 0) == 0, "Launched game exited during native interaction")
+		guard let app = NSRunningApplication(processIdentifier: pid), let path = app.executableURL else
+		{
+			throw TestFailure(description: "Launched PID has no running application executable")
+		}
+		try Require(!app.isTerminated && path.resolvingSymlinksInPath() == executable,
+			"PID no longer belongs to the launched game executable")
+	}
+
+	func FindAndFocus() async throws
+	{
+		let deadline = ProcessInfo.processInfo.systemUptime + 30
+		while ProcessInfo.processInfo.systemUptime < deadline
+		{
+			try Require(kill(pid, 0) == 0, "Game exited before creating its native window")
+			try CheckPermissions(Permissions())
+			let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+			let candidates = content.windows.filter
+			{
+				$0.owningApplication?.processID == pid && $0.windowLayer == 0 && $0.isOnScreen &&
+				$0.frame.width > 128 && $0.frame.height > 128
+			}
+			try Require(candidates.count <= 1, "Launched game has multiple eligible windows; refusing ambiguous input")
+			if let candidate = candidates.first
+			{
+				try CheckAlive()
+				window = candidate
+				try RequireAX(AXUIElementSetAttributeValue(application, kAXFrontmostAttribute as CFString,
+					kCFBooleanTrue), "Activate launched game")
+				let focusDeadline = ProcessInfo.processInfo.systemUptime + 5
+				while ProcessInfo.processInfo.systemUptime < focusDeadline
+				{
+					try CheckAlive()
+					let focusedApp = try ElementAttribute(system, kAXFocusedApplicationAttribute)
+					if try Owner(focusedApp) == pid
+					{
+						let focused = try ElementAttribute(application, kAXFocusedWindowAttribute)
+						try Require(try Owner(focused) == pid, "Focused window belongs to another process")
+						try MatchWindow(focused, candidate)
+						accessibilityWindow = focused
+						return
+					}
+					try await Task.sleep(nanoseconds: 20_000_000)
+				}
+				throw TestFailure(description: "Cannot focus the launched game; no keyboard input was sent")
+			}
+			try await Task.sleep(nanoseconds: 20_000_000)
+		}
+		throw TestFailure(description: "Launched game did not create a visible owned window")
+	}
+
+	func MatchWindow(_ element: AXUIElement, _ candidate: SCWindow) throws
+	{
+		let pointValue = try Attribute(element, kAXPositionAttribute)
+		let sizeValue = try Attribute(element, kAXSizeAttribute)
+		try Require(CFGetTypeID(pointValue) == AXValueGetTypeID() && CFGetTypeID(sizeValue) == AXValueGetTypeID(),
+			"Focused window has invalid accessibility geometry")
+		var point = CGPoint.zero
+		var size = CGSize.zero
+		try Require(AXValueGetValue(pointValue as! AXValue, .cgPoint, &point) &&
+			AXValueGetValue(sizeValue as! AXValue, .cgSize, &size), "Cannot read window geometry")
+		try Require(abs(point.x - candidate.frame.minX) <= 1 && abs(point.y - candidate.frame.minY) <= 1 &&
+			abs(size.width - candidate.frame.width) <= 1 && abs(size.height - candidate.frame.height) <= 1,
+			"Focused accessibility window does not match the captured owned window")
+	}
+
+	func CheckFocused() throws
+	{
+		try CheckAlive()
+		guard let window, let accessibilityWindow else { throw TestFailure(description: "No selected game window") }
+		let focusedApp = try ElementAttribute(system, kAXFocusedApplicationAttribute)
+		let focusedWindow = try ElementAttribute(application, kAXFocusedWindowAttribute)
+		try Require(try Owner(focusedApp) == pid, "Game lost foreground focus")
+		try Require(try Owner(focusedWindow) == pid, "Keyboard focus belongs to another process")
+		try Require(CFEqual(focusedWindow, accessibilityWindow), "Game keyboard focus moved to another window")
+		let options: CGWindowListOption = [.optionIncludingWindow]
+		guard let information = CGWindowListCopyWindowInfo(options, window.windowID) as? [[String: Any]],
+			information.count == 1,
+			let owner = information[0][kCGWindowOwnerPID as String] as? NSNumber,
+			let visible = information[0][kCGWindowIsOnscreen as String] as? Bool else
+		{
+			throw TestFailure(description: "Captured window disappeared")
+		}
+		try Require(owner.int32Value == pid && visible, "Captured window is not visible and owned by the launched PID")
+		try MatchWindow(focusedWindow, window)
+	}
+
+	func Space() throws
+	{
+		try CheckPermissions(Permissions())
+		try CheckFocused()
+		let modifiers: CGEventFlags = [.maskShift, .maskControl, .maskAlternate, .maskCommand]
+		try Require(CGEventSource.flagsState(.combinedSessionState).intersection(modifiers).isEmpty &&
+			!CGEventSource.keyState(.combinedSessionState, key: 49), "Existing held keys prevent isolated Space input")
+		guard let source = CGEventSource(stateID: .privateState),
+			let down = CGEvent(keyboardEventSource: source, virtualKey: 49, keyDown: true),
+			let up = CGEvent(keyboardEventSource: source, virtualKey: 49, keyDown: false) else
+		{
+			throw TestFailure(description: "Cannot create native Quartz Space events")
+		}
+		down.flags = []
+		up.flags = []
+		// Both real events target this PID; no global event tap or internal engine
+		// injection is used. InputState retains a press/release in one GLFW poll.
+		down.postToPid(pid)
+		up.postToPid(pid)
+		try CheckFocused()
+	}
+
+	func Capture() async throws -> Frame
+	{
+		try CheckPermissions(Permissions())
+		try CheckFocused()
+		guard let window else { throw TestFailure(description: "No window to capture") }
+		let filter = SCContentFilter(desktopIndependentWindow: window)
+		let configuration = SCStreamConfiguration()
+		configuration.width = Int(window.frame.width.rounded())
+		configuration.height = Int(window.frame.height.rounded())
+		configuration.showsCursor = false
+		configuration.ignoreShadowsSingleWindow = true
+		let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+		try CheckFocused()
+		// Capture only the game interior. Window title bars, focus decoration and
+		// the pointer cannot satisfy the rendered-game pixel-change assertion.
+		try Require(image.width > 96 && image.height > 128 && image.width * image.height <= 16 * 1024 * 1024,
+			"Invalid captured window dimensions")
+		let interior = CGRect(x: 24, y: 64, width: CGFloat(image.width - 48), height: CGFloat(image.height - 88))
+		guard let cropped = image.cropping(to: interior),
+			let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+			let context = CGContext(data: nil, width: cropped.width, height: cropped.height, bitsPerComponent: 8,
+				bytesPerRow: cropped.width * 4, space: colorSpace,
+				bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue) else
+		{
+			throw TestFailure(description: "Cannot normalize the captured game pixels")
+		}
+		context.draw(cropped, in: CGRect(x: 0, y: 0, width: CGFloat(cropped.width), height: CGFloat(cropped.height)))
+		guard let raw = context.data?.assumingMemoryBound(to: UInt8.self) else
+		{
+			throw TestFailure(description: "Captured image has no pixels")
+		}
+		let count = cropped.width * cropped.height
+		var pixels = Data(count: count * 3)
+		pixels.withUnsafeMutableBytes { (bytes: UnsafeMutableRawBufferPointer) in
+			for index in 0..<count
+			{
+				for channel in 0..<3 { bytes[index * 3 + channel] = raw[index * 4 + channel] }
+			}
+		}
+		return Frame(width: cropped.width, height: cropped.height, pixels: pixels)
+	}
+
+	func WaitForImage(previous: String? = nil) async throws -> Frame
+	{
+		let deadline = ProcessInfo.processInfo.systemUptime + 30
+		while ProcessInfo.processInfo.systemUptime < deadline
+		{
+			let frame = try await Capture()
+			if frame.populated && frame.digest != previous { return frame }
+			try await Task.sleep(nanoseconds: 20_000_000)
+		}
+		throw TestFailure(description: "Game did not present populated changed pixels")
+	}
+
+	func RequestClose() throws
+	{
+		try CheckFocused()
+		guard let accessibilityWindow else { throw TestFailure(description: "No game window to close") }
+		let button = try ElementAttribute(accessibilityWindow, kAXCloseButtonAttribute)
+		try Require(try Owner(button) == pid, "Refusing another process's close button")
+		try RequireAX(AXUIElementPerformAction(button, kAXPressAction as CFString), "Press owned window close button")
+	}
+}
+
+@main
+struct NativeInput
+{
+	@MainActor
+	static func main() async
+	{
+		do
+		{
+			let arguments = Array(CommandLine.arguments.dropFirst())
+			let permissions = Permissions()
+			if arguments == ["--preflight"]
+			{
+				try WriteJSON(permissions)
+				try CheckPermissions(permissions)
+				return
+			}
+			try CheckPermissions(permissions)
+			try Require(arguments.count == 3, "Expected launched PID, executable path and artifact directory")
+			guard let pid = Int32(arguments[0]) else { throw TestFailure(description: "Invalid launched PID") }
+			let artifacts = URL(fileURLWithPath: arguments[2], isDirectory: true)
+			let game = try GameWindow(pid: pid, executable: URL(fileURLWithPath: arguments[1]))
+			try await game.FindAndFocus()
+			let before = try await game.WaitForImage()
+			try game.Space()
+			let after = try await game.WaitForImage(previous: before.digest)
+			try game.RequestClose()
+			try before.Save(artifacts.appendingPathComponent("MacOSRuntimeInputBefore.ppm"))
+			try after.Save(artifacts.appendingPathComponent("MacOSRuntimeInputAfter.ppm"))
+			let result: [String: Any] = ["pid": pid, "window_id": game.window!.windowID, "permissions": permissions,
+				"before_sha256": before.digest, "after_sha256": after.digest, "close_requested": true]
+			try WriteJSON(result)
+		}
+		catch
+		{
+			let diagnostic = Data("Native macOS input: \(error)\n".utf8)
+			do
+			{
+				try FileHandle.standardError.write(contentsOf: diagnostic)
+			}
+			catch
+			{
+				exit(2)
+			}
+			exit(1)
+		}
+	}
+}

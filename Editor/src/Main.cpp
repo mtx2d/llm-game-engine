@@ -16,6 +16,24 @@
 
 namespace
 {
+	void StopSimulation(Aster::CommandProcessor& processor)
+	{
+		if (!processor.IsPlaying())
+		{
+			return;
+		}
+		const auto response = processor.Execute({{"command", "simulation.stop"}});
+		if (!response.at("ok").get<bool>())
+		{
+			throw std::runtime_error(response.at("error").get<std::string>());
+		}
+		const auto& errors = response.at("result").at("errors");
+		if (!errors.empty())
+		{
+			throw std::runtime_error(errors.front().get<std::string>());
+		}
+	}
+
 	int RunAutomation(const std::filesystem::path& project)
 	{
 		Aster::CommandProcessor processor(project);
@@ -31,6 +49,7 @@ namespace
 				std::cout << nlohmann::json({{"ok", false}, {"error", error.what()}}).dump() << '\n' << std::flush;
 			}
 		}
+		StopSimulation(processor);
 		return std::cin.bad() ? 1 : 0;
 	}
 
@@ -179,14 +198,12 @@ int main(int argc, char** argv)
 				}
 				++frame;
 			}
-			if (startPlaying && !processor.GetSimulationErrors().empty())
-			{
-				throw std::runtime_error(processor.GetSimulationErrors().front());
-			}
 			if (!screenshot.empty())
 			{
 				SaveScreenshot(renderer.ReadbackRgba8(), screenshot);
 			}
+			// Teardown callbacks run before deciding whether shutdown succeeded.
+			StopSimulation(processor);
 		}
 		renderer.Shutdown();
 		if (!renderer.GetValidationMessages().empty())

@@ -4,6 +4,8 @@ Start `AsterEditor --automation <project-directory>`. Send one JSON object per l
 
 The graphical editor uses the same validated command backend for scene edits, hierarchy changes, inspector controls, gizmos, history, and export. The standalone automation process supports authoring and deterministic simulation without creating a window or graphics device.
 
+Closing standard input stops any active play session and runs its `OnDestroy` callbacks. Shutdown errors go to standard error and produce exit code 1; shutdown does not add an unsolicited protocol response. Send `simulation.stop` explicitly to receive teardown errors in its JSON `result.errors` array. Closing the graphical editor during play likewise checks teardown before returning success.
+
 ```json
 {"id":1,"command":"entity.create","name":"Player"}
 {"id":2,"command":"entity.patch","entity":1,"patch":{"Transform":{"Translation":[0,3,0]}}}

@@ -156,6 +156,13 @@ if(ASTER_BUILD_TESTS)
         --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets" --notices "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty"
         --artifacts "${CMAKE_CURRENT_BINARY_DIR}/runtime-input-evidence")
       set_tests_properties(RuntimeInput PROPERTIES TIMEOUT 180 LABELS "gpu;export;input")
+    elseif(APPLE)
+      add_test(NAME RuntimeInput COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Tests/MacOSRuntimeInputTests.py"
+        --editor "$<TARGET_FILE:AsterEditor>" --runtime "$<TARGET_FILE:AsterRuntime>"
+        --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets" --notices "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty"
+        --artifacts "${CMAKE_CURRENT_BINARY_DIR}/runtime-input-evidence")
+      set_tests_properties(RuntimeInput PROPERTIES TIMEOUT 300 LABELS "gpu;export;input")
     endif()
     add_executable(AsterAssetCorpusTests Tests/AssetCorpusTests.cpp)
     target_link_libraries(AsterAssetCorpusTests PRIVATE AsterRenderer)
@@ -167,22 +174,33 @@ if(ASTER_BUILD_TESTS)
         "${CMAKE_CURRENT_BINARY_DIR}/asset-corpus-evidence")
       set_tests_properties(AssetCorpus PROPERTIES TIMEOUT 180 LABELS "gpu;assets")
     endif()
+    set(asterEditorRenderCommand "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/EditorRenderTests.py"
+      --editor "$<TARGET_FILE:AsterEditor>" --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets"
+      --artifacts "${CMAKE_CURRENT_BINARY_DIR}/editor-render-evidence")
+    if(ASTER_BUILD_GUI AND (WIN32 OR APPLE))
+      add_test(NAME EditorRender COMMAND ${asterEditorRenderCommand})
+      set_tests_properties(EditorRender PROPERTIES TIMEOUT 300 LABELS "gpu;gui")
+    endif()
     if(ASTER_BUILD_GUI AND UNIX AND NOT APPLE)
       find_program(ASTER_XVFB_RUN xvfb-run)
       find_program(ASTER_XDOTOOL xdotool)
       if(ASTER_XVFB_RUN AND ASTER_XDOTOOL)
-        add_test(NAME EditorGui COMMAND "${ASTER_XVFB_RUN}" -a -s "-screen 0 1600x1000x24"
+        # Keep Xvfb available between process/renderer lifetime checks.
+        add_test(NAME EditorRender COMMAND "${ASTER_XVFB_RUN}" -a -s "-screen 0 1600x1000x24 -noreset"
+          ${asterEditorRenderCommand})
+        set_tests_properties(EditorRender PROPERTIES TIMEOUT 300 LABELS "gpu;gui")
+        add_test(NAME EditorGui COMMAND "${ASTER_XVFB_RUN}" -a -s "-screen 0 1600x1000x24 -noreset"
           "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/GuiTests.py"
           --editor "$<TARGET_FILE:AsterEditor>" --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets"
           --artifacts "${CMAKE_CURRENT_BINARY_DIR}/gui-evidence")
         set_tests_properties(EditorGui PROPERTIES TIMEOUT 300 LABELS "gpu;gui")
-        add_test(NAME GraphicalExport COMMAND "${ASTER_XVFB_RUN}" -a
+        add_test(NAME GraphicalExport COMMAND "${ASTER_XVFB_RUN}" -a -s "-screen 0 1280x1024x24 -noreset"
           "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/ExportTests.py"
           --editor "$<TARGET_FILE:AsterEditor>" --runtime "$<TARGET_FILE:AsterRuntime>"
           --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets" --notices "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty"
           --graphical)
         set_tests_properties(GraphicalExport PROPERTIES TIMEOUT 180 LABELS "gpu;export")
-        add_test(NAME RuntimeInput COMMAND "${ASTER_XVFB_RUN}" -a -s "-screen 0 1440x900x24"
+        add_test(NAME RuntimeInput COMMAND "${ASTER_XVFB_RUN}" -a -s "-screen 0 1440x900x24 -noreset"
           "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/RuntimeInputTests.py"
           --editor "$<TARGET_FILE:AsterEditor>" --runtime "$<TARGET_FILE:AsterRuntime>"
           --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets" --notices "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty"
