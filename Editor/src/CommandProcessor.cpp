@@ -58,7 +58,8 @@ namespace Aster
 		{
 			throw std::logic_error("Finish the current edit before changing documents");
 		}
-		if (HasUnsavedChanges() && !request.value("discardChanges", false))
+		const bool discardChanges = request.value("discardChanges", false);
+		if (HasUnsavedChanges() && !discardChanges)
 		{
 			throw std::logic_error("Unsaved changes: save the scene or explicitly set discardChanges to true");
 		}
@@ -66,7 +67,8 @@ namespace Aster
 
 	void CommandProcessor::OpenProject(Project project)
 	{
-		auto scene = Scene::Load(project.ResolveAssetPath(project.GetConfig().StartScene));
+		SceneDocumentFile file;
+		auto scene = file.Load(project.ResolveAssetPath(project.GetConfig().StartScene));
 		auto saved = scene.Serialize();
 		auto scenePath = project.GetConfig().StartScene.generic_string();
 		auto assetRoot = project.GetAssetDirectory();
@@ -74,6 +76,7 @@ namespace Aster
 		m_Project = std::move(project);
 		m_ProjectRoot = std::move(assetRoot);
 		m_Scene = std::move(scene);
+		m_DocumentFile = std::move(file);
 		m_ScenePath = std::move(scenePath);
 		m_SavedScene = std::move(saved);
 		m_Undo.clear();
@@ -167,6 +170,10 @@ namespace Aster
 		}
 		try
 		{
+			if (m_IsClosed)
+			{
+				throw std::logic_error("Editor session is closed");
+			}
 			if (!request.is_object())
 			{
 				throw std::invalid_argument("Request must be a JSON object");
@@ -190,7 +197,14 @@ namespace Aster
 					"entity.create",	 "entity.destroy",	"entity.parent",   "entity.patch",	 "prefab.spawn",
 					"history.undo",		 "history.redo",	"history.begin",   "history.commit", "history.cancel",
 					"simulation.start",	 "simulation.step", "simulation.stop", "input.set",		 "project.export",
-					"scene.environment", "scene.status",	"project.get",	   "project.open",	 "project.create"};
+					"scene.environment", "scene.status",	"project.get",	   "project.open",	 "project.create",
+					"session.close"};
+		}
+		if (command == "session.close")
+		{
+			RequireDocumentChange(request);
+			m_IsClosed = true;
+			return {{"closed", true}};
 		}
 		if (command == "scene.status")
 		{
@@ -222,6 +236,7 @@ namespace Aster
 				throw std::logic_error("Finish editing and save the scene before exporting");
 			}
 			ExportSettings settings;
+			m_DocumentFile.VerifyUnchanged();
 			settings.AssetRoot = m_ProjectRoot;
 			settings.ScenePath = request.at("scene").get<std::string>();
 			settings.RuntimeExecutable = request.at("runtime").get<std::string>();
@@ -308,7 +323,7 @@ namespace Aster
 			}
 			auto path = request.at("path").get<std::string>();
 			auto saved = m_Scene.Serialize();
-			m_Scene.Save(ResolvePath(path));
+			m_DocumentFile.Save(m_Scene, ResolvePath(path));
 			m_ScenePath = std::move(path);
 			m_SavedScene = std::move(saved);
 			return {{"saved", true}};
@@ -392,14 +407,16 @@ namespace Aster
 			RequireDocumentChange(request);
 			std::optional<std::string> scenePath;
 			nlohmann::json saved;
+			SceneDocumentFile file;
 			auto scene = command == "scene.new" ? Scene(request.value("name", "Untitled"))
-												: Scene::Load(ResolvePath(request.at("path").get<std::string>()));
+												: file.Load(ResolvePath(request.at("path").get<std::string>()));
 			if (command == "scene.load")
 			{
 				scenePath = request.at("path").get<std::string>();
 				saved = scene.Serialize();
 			}
 			m_Scene = std::move(scene);
+			m_DocumentFile = std::move(file);
 			m_ScenePath = std::move(scenePath);
 			m_SavedScene = std::move(saved);
 			// History belongs to a document; it cannot resurrect another scene.

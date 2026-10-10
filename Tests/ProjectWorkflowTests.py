@@ -3,11 +3,15 @@
 import argparse
 import json
 from pathlib import Path
+import queue
 import shutil
 import subprocess
 import tempfile
+import threading
 
 from ExportTests import package_executable, package_resources, macos_shipping_environment
+from EditorRenderTests import read_image, region
+from CreateBlockStack import author
 
 
 def main():
@@ -47,6 +51,60 @@ def main():
         run([editor, "--create-project", source, "Overwrite"], expected=1)
         assert manifest.read_bytes() == original, "Duplicate creation changed the project"
 
+        conflict_root = root / "Concurrent editing"
+        conflict_project = Path(json.loads(run(
+            [editor, "--create-project", conflict_root, "Conflicts"]).stdout)["project"])
+        conflict_scene = conflict_root / "Assets/Scenes/Main.aster"
+        with (root / "LiveEditor.stderr").open("w+") as diagnostics:
+            live = subprocess.Popen([str(editor), "--automation", str(conflict_project)], cwd=cwd,
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=diagnostics,
+                                    text=True)
+            replies = queue.Queue()
+
+            def read_replies():
+                for line in live.stdout:
+                    replies.put(line)
+                replies.put(None)
+
+            reader = threading.Thread(target=read_replies, daemon=True)
+            reader.start()
+            try:
+                def send(request):
+                    live.stdin.write(json.dumps(request) + "\n")
+                    live.stdin.flush()
+                    line = replies.get(timeout=15)
+                    assert line is not None, "Live editor exited without its command response"
+                    return json.loads(line)
+
+                assert send({"command": "entity.create", "name": "Pending live edit"})["ok"]
+                changed = automate(conflict_project, [
+                    {"command": "entity.create", "name": "External persisted edit"},
+                    {"command": "scene.save", "path": "Scenes/Main.aster"}])
+                assert all(response["ok"] for response in changed), changed
+                external_bytes = conflict_scene.read_bytes()
+                rejected = send({"command": "scene.save", "path": "Scenes/Main.aster"})
+                assert not rejected["ok"] and "conflict" in rejected["error"], rejected
+                assert conflict_scene.read_bytes() == external_bytes
+                assert send({"command": "scene.status"})["result"]["dirty"]
+                assert send({"command": "scene.get"})["result"]["Entities"][1]["Name"] == "Pending live edit"
+                assert not send({"command": "session.close"})["ok"], "Conflict must not permit dirty close"
+                assert send({"command": "scene.save", "path": "Scenes/LiveRecovered.aster"})["ok"]
+                assert send({"command": "session.close"})["result"]["closed"]
+                live.stdin.close()
+                assert live.wait(timeout=15) == 0
+                recovered = json.loads((conflict_root / "Assets/Scenes/LiveRecovered.aster").read_text())
+                assert recovered["Entities"][1]["Name"] == "Pending live edit"
+                assert conflict_scene.read_bytes() == external_bytes, "Recovery overwrote external work"
+            finally:
+                if live.poll() is None:
+                    live.terminate()
+                    live.wait(timeout=5)
+                reader.join(timeout=5)
+                assert not reader.is_alive(), "Live editor protocol reader failed to stop"
+                live.stdout.close()
+                if not live.stdin.closed:
+                    live.stdin.close()
+
         (source / "Assets/Scripts").mkdir()
         (source / "Assets/Scripts/Actor.lua").write_text(
             'return {OnCreate=function(self, entity) '
@@ -55,12 +113,19 @@ def main():
             'engine.log("Project script resolved from asset root") end}', encoding="utf-8")
         (source / "Assets/Models").mkdir()
         shutil.copyfile(assets / "Models/Cube.gltf", source / "Assets/Models/Cube.gltf")
+        author(editor, source / "Assets", "Authored prefab", "Scenes/AuthoredPrefab.json", prefab=True)
+        prefab_bytes = (source / "Assets/Scenes/AuthoredPrefab.json").read_bytes()
+        author(editor, source / "Assets", "Authored prefab", "Scenes/AuthoredPrefab.json", prefab=True)
+        assert (source / "Assets/Scenes/AuthoredPrefab.json").read_bytes() == prefab_bytes, \
+            "Explicit tool reauthoring changed the deterministic prefab"
         responses = automate(manifest, [
             {"command": "project.get"},
             {"command": "scene.status"},
             {"command": "entity.create", "name": "Actor"},
             {"command": "entity.patch", "entity": 2, "patch": {
                 "Script": {"Path": "Scripts/Actor.lua", "Enabled": True},
+                "Light": {"Type": "Directional", "Color": [1, 1, 1], "Intensity": 4,
+                          "Range": 30, "InnerCone": 20, "OuterCone": 30, "CastShadows": False},
                 "MeshRenderer": {"Mesh": "Models/Cube.gltf", "BaseColor": [0.9, 0.2, 0.1, 1],
                                  "Metallic": 0, "Roughness": 0.5, "Visible": True}}},
             {"command": "scene.load", "path": "Scenes/Main.aster"},
@@ -121,7 +186,14 @@ def main():
         if args.graphical:
             screenshot = root / "ProjectEditor.ppm"
             run([editor, "--project", manifest, "--frames", 3, "--audio", "offline", "--screenshot", screenshot])
-            assert screenshot.read_bytes().startswith(b"P6\n1440 900\n255\n")
+            image = read_image(screenshot)
+            _, _, pixels = image
+            assert len(set(zip(pixels[0::3], pixels[1::3], pixels[2::3]))) > 500, \
+                "Project editor screenshot lacks rendered content"
+            viewport = region(image, (270, 115, 1090, 600))
+            red_pixels = sum(red > 40 and red > green * 1.5 and red > blue * 1.5
+                             for red, green, blue in zip(viewport[0::3], viewport[1::3], viewport[2::3]))
+            assert red_pixels > 20, f"Relocated project's authored red mesh was not rendered: {red_pixels} pixels"
             assert (relocated / "Assets/Scenes/Main.aster").read_bytes() == authored
             result = json.loads(run([runtime, "--project", manifest, "--steps", 3, "--window", "--validation"]).stdout)
             assert result["errors"] == [] and result["frames"] == 3

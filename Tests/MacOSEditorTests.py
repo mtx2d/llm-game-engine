@@ -104,6 +104,10 @@ class MacEditorDriver:
         assert len(pixels) == width * height * 3
         return width, height, pixels
 
+    def request_close(self):
+        response = self.request("requestClose")
+        assert response.get("requested"), "Native helper did not request close"
+
     def close(self):
         if not self.closed:
             response = self.request("close")

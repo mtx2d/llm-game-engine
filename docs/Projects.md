@@ -31,7 +31,11 @@ Editor and runtime load the startup scene automatically. A relative `--scene Sce
 
 `scene.status` reports scene path, unsaved changes, edit group and play state. Save/load establishes the clean baseline; Undo/Redo can return to or leave it. Simulation does not dirty authored content. Changing documents clears the old document's history.
 
-New/load/project-open operations reject unsaved changes unless the request explicitly supplies `"discardChanges": true`. The GUI offers Save and continue, Discard, and Cancel when changing scenes. Save and continue saves the current document's recorded path even when the load-path field contains a different target. An untitled scene must first be saved to a chosen path. Saving/switching requires completed edit groups; project switching requires stopped simulation. Export rejects unfinished or unsaved current documents.
+New/load/project-open operations reject unsaved changes unless the request explicitly supplies `"discardChanges": true`. The GUI offers Save and continue, Discard, and Cancel when changing scenes or closing the native window. Save and continue saves the current document's recorded path even when the load-path field contains a different target. An untitled scene must first be saved to a chosen path. Saving/switching requires completed edit groups; project switching requires stopped simulation. Export rejects unfinished or unsaved current documents.
+
+Native close stops play and restores authored content before asking about unsaved changes. Cancelling retains the scene and resumes editing with play stopped. A failed Save leaves the confirmation open and the scene available. Teardown callback errors keep the interactive editor open with an error in its status bar. Automation can use `session.close` after stopping simulation and finishing edits; dirty documents require explicit discard. Successful close ends the protocol after its response and rejects further commands on that session. EOF and a bounded `--frames` run remain explicit noninteractive termination paths; automation must save work it wants to retain.
+
+An editor document retains the exact bytes read at load or last successful Save, bounded to 64 MiB. Save compares those bytes immediately before publication. External modifications, including whitespace edits and changes that preserve size/timestamp, cause an error. Deletion is also an error. Rejection preserves in-memory content, dirty state, document identity and Undo/Redo history. Load with explicit discard accepts the external version; Save As to a new path preserves pending work separately. Save As never replaces an existing destination. Tools intentionally reauthoring an existing scene must load it first, then edit/replace it through the shared command interface. Automation export verifies the active document's file baseline before staging, even when the in-memory scene is clean. Core and editor scene saves both reject serialized output larger than the 64 MiB reload limit.
 
 ```json
 {"command":"scene.status"}
@@ -40,10 +44,11 @@ New/load/project-open operations reject unsaved changes unless the request expli
 {"command":"project.open","path":"/path/to/Other/Project.asterproj"}
 {"command":"project.create","path":"/path/to/NewGame","name":"My Game"}
 {"command":"scene.load","path":"Scenes/Other.aster","discardChanges":true}
+{"command":"session.close"}
 ```
 
 Project open/create paths identify explicitly requested filesystem locations; scene/component/prefab paths remain inside the active asset root. `project.get` returns null configuration/path in legacy asset-directory mode. C++ `Project::UpdateConfig` validates and persists before changing the instance. Interactive configuration editing remains planned.
 
-Scene/project writes create exclusive sibling temporary files, flush contents, then atomically replace the destination. Publication failures preserve the old destination and remove the owned temporary file. Parent-directory entry durability under power loss is not guaranteed on every filesystem. Scene/project/game-manifest reads bound actual bytes read and reject duplicate keys and excessive nesting.
+Scene/project writes create exclusive sibling temporary files and flush contents before publication. Existing-document saves replace the destination atomically after comparing its contents; new editor destinations use exclusive publication so a competing creator cannot be overwritten. Publication failures before replacement preserve the old destination and remove the owned temporary file. Parent-directory entry durability under power loss is not guaranteed on every filesystem. Scene/project/game-manifest reads bound actual bytes read and reject duplicate keys and excessive nesting.
 
-Window-close protection, crash recovery, external modification conflicts, a graphical project browser and safe live reloading remain production work; see [ProductionPlan.md](ProductionPlan.md).
+The content check detects observed external changes; comparison and replacement are separate filesystem operations, so simultaneous arbitrary writers are not serialized. Cooperative editor ownership/locking, crash recovery, a graphical project browser and safe live reloading remain production work; see [ProductionPlan.md](ProductionPlan.md).

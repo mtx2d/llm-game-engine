@@ -335,7 +335,12 @@ namespace Aster
 
 	void Scene::Save(const std::filesystem::path& path) const
 	{
-		WriteTextFileAtomically(path, Serialize().dump(2));
+		const auto contents = Serialize().dump(2);
+		if (contents.size() > 64ULL * 1024ULL * 1024ULL)
+		{
+			throw std::invalid_argument("Scene exceeds the 64 MiB document size limit");
+		}
+		WriteTextFileAtomically(path, contents);
 	}
 
 	Scene Scene::Load(const std::filesystem::path& path)

@@ -316,6 +316,18 @@ void RunRendererTests(const std::filesystem::path& evidence)
 	RequireClean(renderer);
 
 	bool overlayCalled = false;
+	if (auto* window = static_cast<GLFWwindow*>(renderer.GetNativeWindow()))
+	{
+		glfwSetWindowShouldClose(window, GLFW_TRUE);
+		Require(renderer.ShouldClose(), "Renderer exposes native close requests");
+		renderer.CancelCloseRequest();
+		Require(!renderer.ShouldClose(), "Editor can defer native close for document confirmation");
+	}
+	else
+	{
+		renderer.CancelCloseRequest();
+		Require(!renderer.ShouldClose(), "Headless close cancellation is harmless");
+	}
 	renderer.SetOverlayCallback(
 		[&](nvrhi::IDevice* device, nvrhi::ICommandList* commands, nvrhi::IFramebuffer* target)
 		{

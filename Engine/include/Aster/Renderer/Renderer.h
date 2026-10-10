@@ -101,6 +101,7 @@ namespace Aster
 		// Explicit shutdown permits checking diagnostics emitted during resource destruction.
 		void Shutdown();
 		bool ShouldClose() const;
+		void CancelCloseRequest();
 		std::string GetDeviceName() const;
 		std::vector<std::string> GetValidationMessages() const;
 		uint32_t GetWidth() const;

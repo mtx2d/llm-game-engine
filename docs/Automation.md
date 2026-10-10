@@ -15,6 +15,7 @@ Closing standard input stops any active play session and runs its `OnDestroy` ca
 | Command | Parameters | Behavior |
 | --- | --- | --- |
 | `help` | none | List commands |
+| `session.close` | optional boolean `discardChanges` | Close after stopped simulation and completed edits; reject unsaved work without explicit discard; terminate automation after the response |
 | `project.get` | none | Return active project path/configuration and resolved asset root; configuration/path are null in legacy directory mode |
 | `project.open` | `path`, optional `discardChanges` | Open a validated project file and startup scene; preserve active project on failure |
 | `project.create` | `path`, `name`, optional `discardChanges` | Create a complete project in an absent directory and open it |
@@ -22,7 +23,7 @@ Closing standard input stops any active play session and runs its `OnDestroy` ca
 | `scene.get` | none | Return current serialized scene, including simulation state during play |
 | `scene.new` | optional `name`, `discardChanges` | Replace authoring scene with an empty unsaved document; reject dirty state without explicit discard |
 | `scene.replace` | `scene` | Validate and replace a complete versioned scene document |
-| `scene.load` / `scene.save` | `path`; load accepts optional `discardChanges` | Load/save relative to asset root; load rejects dirty state without explicit discard; saving requires a completed edit group |
+| `scene.load` / `scene.save` | `path`; load accepts optional `discardChanges` | Load/save relative to asset root; load rejects dirty state without explicit discard; saving requires a completed edit group, rejects changed/deleted source bytes and never replaces another existing Save As destination |
 | `scene.environment` | `environment` | Merge HDR environment `Path`, nonnegative `Intensity`, and yaw `Rotation` in radians; empty path disables IBL |
 | `entity.create` | optional `name` | Create entity and return persistent `entity` ID |
 | `entity.destroy` | `entity` | Destroy entity and descendant subtree |

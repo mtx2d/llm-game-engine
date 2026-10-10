@@ -195,6 +195,18 @@ def run_workflow(driver, scene_path, artifacts):
     (artifacts / "Authored.aster").write_text(json.dumps(authored, indent=2) + "\n")
     (artifacts / "Stopped.aster").write_text(json.dumps(stopped, indent=2) + "\n")
     save_image(artifacts / "EditorAfter.ppm", driver.capture())
+    # Closing during dirty play must stop simulation, present confirmation and
+    # preserve authored work when cancelled. A successful Save proves editing
+    # resumed, rather than leaving an invisible active runtime behind the modal.
+    driver.click(55, 151)
+    driver.replace_text(width - 250, 221, "CancelledNativeClose")
+    before_close = scene_path.read_bytes()
+    driver.click(232, 21)
+    driver.request_close()
+    wait_for_document_modal("CloseCancel")
+    driver.click(width / 2 + 140, height / 2 + 7)
+    assert scene_path.read_bytes() == before_close, "Cancelled close unexpectedly saved authored work"
+    save_and_wait(lambda scene: entity(scene)["Name"] == "CancelledNativeClose")
     report = {
         "logical_width": width, "logical_height": height, "gallery_id": gallery_id, "created_id": created_id,
         "play_changed_viewport_samples": changed, "viewport_sample_count": len(authored_samples),
@@ -202,7 +214,8 @@ def run_workflow(driver, scene_path, artifacts):
         "document_modal_samples": modal_samples,
         "assertions": ["native Save readiness", "world-X drag", "single Undo", "text rename", "Undo/Redo", "save/reload",
                        "dirty Cancel", "explicit Discard", "Save and continue", "entity creation",
-                       "play source preservation", "stop authored-state restoration"]
+                       "play source preservation", "stop authored-state restoration",
+                       "dirty native close during play", "close Cancel preserves authored work and stops play"]
     }
     driver.close()
     # The platform owner publishes this report only after both the driver and

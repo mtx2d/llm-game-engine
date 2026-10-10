@@ -15,7 +15,9 @@ class WindowFrames:
                     ("data", ctypes.c_void_p), ("byte_order", ctypes.c_int),
                     ("bitmap_unit", ctypes.c_int), ("bitmap_bit_order", ctypes.c_int),
                     ("bitmap_pad", ctypes.c_int), ("depth", ctypes.c_int),
-                    ("bytes_per_line", ctypes.c_int), ("bits_per_pixel", ctypes.c_int)]
+                    ("bytes_per_line", ctypes.c_int), ("bits_per_pixel", ctypes.c_int),
+                    ("red_mask", ctypes.c_ulong), ("green_mask", ctypes.c_ulong),
+                    ("blue_mask", ctypes.c_ulong)]
 
     def __init__(self, window, width, height):
         self.window, self.width, self.height = int(window), width, height
@@ -27,6 +29,8 @@ class WindowFrames:
                                       ctypes.c_ulong, ctypes.c_int]
         self.x11.XGetImage.restype = ctypes.POINTER(self.Image)
         self.x11.XDestroyImage.argtypes = [ctypes.POINTER(self.Image)]
+        self.x11.XGetPixel.argtypes = [ctypes.POINTER(self.Image), ctypes.c_int, ctypes.c_int]
+        self.x11.XGetPixel.restype = ctypes.c_ulong
         self.x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
         self.display = self.x11.XOpenDisplay(None)
         if not self.display:
@@ -49,6 +53,26 @@ class WindowFrames:
                 raise RuntimeError("Native window returned invalid image dimensions")
             pixels = ctypes.string_at(contents.data, count)
             return hashlib.sha256(pixels).digest(), len(set(pixels)) > 8
+        finally:
+            self.x11.XDestroyImage(image)
+
+    def sample_rgb(self, points):
+        """Sample presented drawable pixels using the native image's color masks."""
+        image = self.x11.XGetImage(self.display, self.window, 0, 0,
+                                  self.width, self.height, ctypes.c_ulong(-1), 2)
+        if not image:
+            raise RuntimeError("Cannot read the native editor window")
+        try:
+            masks = (image.contents.red_mask, image.contents.green_mask, image.contents.blue_mask)
+            assert all(masks), "Native test display must expose RGB channels"
+            shifts = [(mask & -mask).bit_length() - 1 for mask in masks]
+            samples = []
+            for x, y in points:
+                assert 0 <= x < self.width and 0 <= y < self.height
+                value = self.x11.XGetPixel(image, x, y)
+                samples.append(tuple(((value & mask) >> shift) * 255 // (mask >> shift)
+                                     for mask, shift in zip(masks, shifts)))
+            return samples
         finally:
             self.x11.XDestroyImage(image)
 

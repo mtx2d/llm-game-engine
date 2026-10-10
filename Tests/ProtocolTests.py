@@ -76,4 +76,15 @@ with tempfile.TemporaryDirectory(prefix="AsterProtocol-") as temporary:
         process = subprocess.run([runtime, "--steps", value], text=True, capture_output=True, timeout=30)
         assert process.returncode != 0
 
-print("Editor protocol recovery, persistence, simulation, and runtime/editor EOF teardown errors passed")
+    requests = [{"command": "entity.create"}, {"command": "session.close"},
+                {"command": "scene.status"}, {"command": "session.close", "discardChanges": True},
+                {"command": "entity.create", "name": "Must not run after close"}]
+    process = subprocess.run([editor, "--automation", str(project)],
+                             input="".join(json.dumps(request) + "\n" for request in requests),
+                             text=True, capture_output=True, timeout=30)
+    assert process.returncode == 0, process.stderr
+    responses = [json.loads(line) for line in process.stdout.splitlines()]
+    assert len(responses) == 4 and [response["ok"] for response in responses] == [True, False, True, True]
+    assert responses[2]["result"]["dirty"] and responses[3]["result"]["closed"]
+
+print("Editor protocol recovery, persistence, simulation, protected close and EOF teardown errors passed")

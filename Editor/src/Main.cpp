@@ -38,7 +38,7 @@ namespace
 	{
 		Aster::CommandProcessor processor(project);
 		std::string line;
-		while (std::getline(std::cin, line))
+		while (!processor.IsClosed() && std::getline(std::cin, line))
 		{
 			try
 			{
@@ -192,10 +192,14 @@ int main(int argc, char** argv)
 				}
 			}
 			int frame = 0;
-			while (!renderer.ShouldClose() && (maximumFrames == 0 || frame < maximumFrames))
+			while (!processor.IsClosed() && (maximumFrames == 0 || frame < maximumFrames))
 			{
 				renderer.PollEvents();
 				gui.RunFrame();
+				if (processor.IsClosed())
+				{
+					break;
+				}
 				try
 				{
 					renderer.RenderScene(processor.GetScene(), importer, gui.GetRenderSettings());

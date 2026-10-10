@@ -548,6 +548,15 @@ namespace Aster
 			return m_Window && glfwWindowShouldClose(m_Window);
 		}
 
+		void CancelCloseRequest()
+		{
+			CheckActive();
+			if (m_Window)
+			{
+				glfwSetWindowShouldClose(m_Window, GLFW_FALSE);
+			}
+		}
+
 		std::string GetDeviceName() const
 		{
 			return m_DeviceName;
@@ -1280,6 +1289,11 @@ namespace Aster
 	bool Renderer::ShouldClose() const
 	{
 		return m_Impl->ShouldClose();
+	}
+
+	void Renderer::CancelCloseRequest()
+	{
+		m_Impl->CancelCloseRequest();
 	}
 
 	std::string Renderer::GetDeviceName() const

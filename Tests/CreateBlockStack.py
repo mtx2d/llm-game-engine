@@ -8,6 +8,12 @@ import subprocess
 
 def author(editor, assets, scene_name, path, seeds=(), prefab=False):
     commands = [{"command": "scene.new", "name": scene_name}]
+    if (assets / path).exists():
+        # Reauthor an existing document explicitly so its observed file bytes
+        # participate in conflict protection. Save As never overwrites a target.
+        commands = [{"command": "scene.load", "path": path},
+                    {"command": "scene.replace", "scene": {
+                        "Version": 1, "Name": scene_name, "NextEntityID": 1, "Entities": []}}]
     next_id = 0
 
     def entity(name, patch, parent=None):

@@ -22,20 +22,20 @@
 
 namespace Aster
 {
-	nlohmann::json ReadJsonFile(const std::filesystem::path& path, size_t maximumBytes, size_t maximumDepth)
+	std::string ReadTextFile(const std::filesystem::path& path, size_t maximumBytes)
 	{
-		if (maximumBytes == 0 || maximumBytes > 64ULL * 1024ULL * 1024ULL || maximumDepth == 0 || maximumDepth > 128)
+		if (maximumBytes == 0 || maximumBytes > 64ULL * 1024ULL * 1024ULL)
 		{
-			throw std::invalid_argument("Invalid JSON file limits");
+			throw std::invalid_argument("Invalid text file size limit");
 		}
 		if (!std::filesystem::is_regular_file(path) || std::filesystem::file_size(path) > maximumBytes)
 		{
-			throw std::invalid_argument("JSON input is not a regular file within its size limit: " + path.string());
+			throw std::invalid_argument("Input is not a regular file within its size limit: " + path.string());
 		}
 		std::ifstream input(path, std::ios::binary);
 		if (!input)
 		{
-			throw std::runtime_error("Cannot open JSON file: " + path.string());
+			throw std::runtime_error("Cannot open text file: " + path.string());
 		}
 		std::string text;
 		std::array<char, 8192> buffer{};
@@ -46,40 +46,54 @@ namespace Aster
 			text.append(buffer.data(), static_cast<size_t>(input.gcount()));
 			if (text.size() > maximumBytes)
 			{
-				throw std::invalid_argument("JSON file grew beyond its size limit: " + path.string());
+				throw std::invalid_argument("File grew beyond its size limit: " + path.string());
 			}
 		}
 		if (input.bad() || !input.eof())
 		{
-			throw std::runtime_error("Cannot read JSON file: " + path.string());
+			throw std::runtime_error("Cannot read text file: " + path.string());
 		}
-		std::vector<std::set<std::string>> objectKeys;
-		return nlohmann::json::parse(
-			text,
-			[&](int depth, nlohmann::json::parse_event_t event, nlohmann::json& value)
-			{
-				if (depth < 0 || static_cast<size_t>(depth) > maximumDepth)
-				{
-					throw std::invalid_argument("JSON nesting exceeds its depth limit: " + path.string());
-				}
-				if (event == nlohmann::json::parse_event_t::object_start)
-				{
-					objectKeys.emplace_back();
-				}
-				else if (event == nlohmann::json::parse_event_t::object_end)
-				{
-					objectKeys.pop_back();
-				}
-				else if (event == nlohmann::json::parse_event_t::key &&
-						 !objectKeys.back().insert(value.get<std::string>()).second)
-				{
-					throw std::invalid_argument("Duplicate JSON key: " + value.get<std::string>());
-				}
-				return true;
-			});
+		return text;
 	}
 
-	void WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text)
+	nlohmann::json ParseJson(std::string_view text, size_t maximumDepth)
+	{
+		if (text.size() > 64ULL * 1024ULL * 1024ULL || maximumDepth == 0 || maximumDepth > 128)
+		{
+			throw std::invalid_argument("Invalid JSON input size or depth limit");
+		}
+		std::vector<std::set<std::string>> objectKeys;
+		const auto validate = [&](int depth, nlohmann::json::parse_event_t event, nlohmann::json& value)
+		{
+			if (depth < 0 || static_cast<size_t>(depth) > maximumDepth)
+			{
+				throw std::invalid_argument("JSON nesting exceeds its depth limit");
+			}
+			if (event == nlohmann::json::parse_event_t::object_start)
+			{
+				objectKeys.emplace_back();
+			}
+			else if (event == nlohmann::json::parse_event_t::object_end)
+			{
+				objectKeys.pop_back();
+			}
+			else if (event == nlohmann::json::parse_event_t::key &&
+					 !objectKeys.back().insert(value.get<std::string>()).second)
+			{
+				throw std::invalid_argument("Duplicate JSON key: " + value.get<std::string>());
+			}
+			return true;
+		};
+		return nlohmann::json::parse(text, validate);
+	}
+
+	nlohmann::json ReadJsonFile(const std::filesystem::path& path, size_t maximumBytes, size_t maximumDepth)
+	{
+		return ParseJson(ReadTextFile(path, maximumBytes), maximumDepth);
+	}
+
+	static void WriteTextFile(const std::filesystem::path& path, std::string_view text, bool conditional,
+							  std::optional<std::string_view> expectedContents)
 	{
 		if (path.filename().empty() || path.filename() == "." || path.filename() == ".." ||
 			std::filesystem::is_symlink(path))
@@ -167,11 +181,9 @@ namespace Aster
 			}
 			const bool closed = CloseHandle(file) != 0;
 			file = INVALID_HANDLE_VALUE;
-			if (!closed || !MoveFileExW(temporary.c_str(), destination.c_str(),
-										MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+			if (!closed)
 			{
-				throw std::system_error(static_cast<int>(GetLastError()), std::system_category(),
-										"Publish output file");
+				throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "Close output file");
 			}
 #else
 			int flushed = 0;
@@ -189,7 +201,33 @@ namespace Aster
 			{
 				throw std::system_error(errno, std::generic_category(), "Close output file");
 			}
-			std::filesystem::rename(temporary, destination);
+#endif
+			if (conditional && expectedContents &&
+				ReadTextFile(destination, 64ULL * 1024ULL * 1024ULL) != *expectedContents)
+			{
+				throw std::runtime_error(
+					"Save conflict: file changed outside this editor; reload or save to a new path");
+			}
+#ifdef _WIN32
+			const DWORD flags =
+				MOVEFILE_WRITE_THROUGH | ((!conditional || expectedContents) ? MOVEFILE_REPLACE_EXISTING : 0);
+			if (!MoveFileExW(temporary.c_str(), destination.c_str(), flags))
+			{
+				throw std::system_error(static_cast<int>(GetLastError()), std::system_category(),
+										"Publish output file");
+			}
+#else
+			if (conditional && !expectedContents)
+			{
+				// Same-directory linking publishes a complete file exclusively on
+				// POSIX, where rename would replace a competing creator's file.
+				std::filesystem::create_hard_link(temporary, destination);
+				std::filesystem::remove(temporary);
+			}
+			else
+			{
+				std::filesystem::rename(temporary, destination);
+			}
 #endif
 		}
 		catch (...)
@@ -209,5 +247,16 @@ namespace Aster
 			std::filesystem::remove(temporary, cleanupError);
 			throw;
 		}
+	}
+
+	void WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text)
+	{
+		WriteTextFile(path, text, false, std::nullopt);
+	}
+
+	void WriteTextFileConditionally(const std::filesystem::path& path, std::string_view text,
+									std::optional<std::string_view> expectedContents)
+	{
+		WriteTextFile(path, text, true, expectedContents);
 	}
 } // namespace Aster

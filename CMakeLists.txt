@@ -61,7 +61,8 @@ target_compile_definitions(Aster PUBLIC GLM_FORCE_RADIANS GLM_FORCE_DEPTH_ZERO_T
 target_compile_definitions(Aster PRIVATE GLM_ENABLE_EXPERIMENTAL)
 aster_target(Aster)
 
-add_library(AsterEditorCommands STATIC Editor/src/CommandProcessor.cpp Editor/src/ProjectExporter.cpp)
+add_library(AsterEditorCommands STATIC Editor/src/CommandProcessor.cpp Editor/src/ProjectExporter.cpp
+  Editor/src/SceneDocumentFile.cpp)
 target_include_directories(AsterEditorCommands PUBLIC Editor/include)
 target_link_libraries(AsterEditorCommands PUBLIC Aster)
 aster_target(AsterEditorCommands)

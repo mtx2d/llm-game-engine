@@ -274,6 +274,13 @@ namespace Aster
 			DrawAssets();
 			DrawGizmo();
 			PickViewport();
+			if (m_Renderer.ShouldClose())
+			{
+				// Include this frame's final gizmo/inspector delta before deciding
+				// whether close needs confirmation, then defer the native request.
+				m_Renderer.CancelCloseRequest();
+				RequestClose();
+			}
 			DrawExport();
 			DrawDocumentChange();
 			DrawStatus();
@@ -464,6 +471,20 @@ namespace Aster
 			}
 		}
 
+		void RequestClose()
+		{
+			FinishEdit(true);
+			if (m_Commands.IsPlaying())
+			{
+				const auto stopped = Execute({{"command", "simulation.stop"}});
+				if (!stopped.value("ok", false) || !stopped.at("result").at("errors").empty())
+				{
+					return;
+				}
+			}
+			RequestDocumentChange({{"command", "session.close"}});
+		}
+
 		void DrawDocumentChange()
 		{
 			if (m_PendingDocumentChange)
@@ -475,7 +496,10 @@ namespace Aster
 			ImGui::SetNextWindowSize({480, 150});
 			if (ImGui::BeginPopupModal("Unsaved changes", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove))
 			{
-				ImGui::TextUnformatted("Save your changes before opening another scene?");
+				const bool closing =
+					m_PendingDocumentChange && m_PendingDocumentChange->at("command") == "session.close";
+				ImGui::TextUnformatted(closing ? "Save your changes before closing Aster?"
+											   : "Save your changes before opening another scene?");
 				bool proceed = false;
 				ImGui::SetCursorPos({12, 70});
 				ImGui::BeginDisabled(!m_Commands.GetScenePath());

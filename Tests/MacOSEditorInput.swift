@@ -314,6 +314,10 @@ struct NativeEditorInput
 				case "capture":
 					let frame = try await game.Capture(region: driver.client)
 					try frame.Save(URL(fileURLWithPath: arguments[2]).appendingPathComponent("EditorSnapshot.ppm"))
+				case "requestClose":
+					try driver.ReleaseHeldInput()
+					try game.RequestClose()
+					response["requested"] = true
 				case "close":
 					try driver.ReleaseHeldInput()
 					try game.RequestClose()

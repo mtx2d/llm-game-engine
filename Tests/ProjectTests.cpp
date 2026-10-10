@@ -59,6 +59,18 @@ namespace
 		Check(Aster::ReadJsonFile(path, 1024).at("value") == 1, "Atomic file is readable");
 		Aster::WriteTextFileAtomically(path, R"({"name":"second","value":2})");
 		Check(Aster::ReadJsonFile(path, 1024).at("value") == 2, "Atomic file replaces existing contents");
+		const auto expected = Aster::ReadTextFile(path, 1024);
+		Rejects([&] { Aster::WriteTextFileConditionally(path, "new", std::nullopt); },
+				"Exclusive publication cannot replace an existing file");
+		Rejects([&] { Aster::WriteTextFileConditionally(path, "new", "different"); },
+				"Conditional publication rejects changed bytes");
+		Check(Aster::ReadTextFile(path, 1024) == expected, "Rejected publications preserve exact bytes");
+		Aster::WriteTextFileConditionally(path, "", expected);
+		Aster::WriteTextFileConditionally(path, expected, "");
+		Check(Aster::ReadTextFile(path, 1024) == expected, "An empty expected file differs from an absent file");
+		Aster::WriteTextFileConditionally(root / "Exclusive.json", expected, std::nullopt);
+		Check(Aster::ReadTextFile(root / "Exclusive.json", 1024) == expected,
+			  "Exclusive output publishes complete bytes");
 		Rejects([&] { (void)Aster::ReadJsonFile(path, 2); }, "Oversized JSON rejected");
 		Rejects([&] { (void)Aster::ReadJsonFile(path, 0); }, "Zero read limit rejected");
 		Rejects([&] { (void)Aster::ReadJsonFile(root, 1024); }, "Directory input rejected");
@@ -191,6 +203,141 @@ namespace
 		}
 	}
 
+	void TestSaveConflicts(const std::filesystem::path& root)
+	{
+		const auto project = Aster::Project::Create(root / "Conflicts", "Conflicts");
+		const auto path = project.GetAssetDirectory() / "Scenes/Main.aster";
+		const auto original = Aster::ReadTextFile(path, 64 * 1024);
+		Aster::CommandProcessor first(project.GetFilePath());
+		Aster::CommandProcessor second(project.GetFilePath());
+		Check(first.Execute({{"command", "entity.create"}, {"name", "First editor"}}).at("ok"), "First edit");
+		Check(second.Execute({{"command", "entity.create"}, {"name", "Second editor"}}).at("ok"), "Second edit");
+		Check(first.Execute({{"command", "scene.save"}, {"path", "Scenes/Main.aster"}}).at("ok"), "First save");
+		const auto firstSaved = Aster::ReadTextFile(path, 64 * 1024);
+		Aster::WriteTextFileAtomically(path, firstSaved + "\n");
+		const auto rejectedExport = first.Execute({{"command", "project.export"}});
+		Check(!rejectedExport.at("ok").get<bool>() &&
+				  rejectedExport.at("error").get<std::string>().find("conflict") != std::string::npos &&
+				  !first.HasUnsavedChanges(),
+			  "Export checks the clean document's disk baseline before staging");
+		Aster::WriteTextFileAtomically(path, firstSaved);
+		const auto secondScene = second.GetScene().Serialize();
+		const auto stable = second.GetScene().Entities().front();
+		Check(!second.Execute({{"command", "scene.save"}, {"path", "Scenes/Main.aster"}}).at("ok").get<bool>(),
+			  "Another editor's save is a conflict");
+		Check(Aster::ReadTextFile(path, 64 * 1024) == firstSaved && second.HasUnsavedChanges() &&
+				  second.GetScene().Serialize() == secondScene && second.GetScene().IsAlive(stable) &&
+				  second.GetScenePath() == "Scenes/Main.aster",
+			  "Conflict preserves disk, memory, handles, document identity and dirtiness");
+		Check(second.Execute({{"command", "history.undo"}}).at("ok") && !second.HasUnsavedChanges(),
+			  "Conflict preserves Undo and clean baseline");
+		Check(second.Execute({{"command", "history.redo"}}).at("ok") && second.HasUnsavedChanges(),
+			  "Conflict preserves Redo");
+		Aster::WriteTextFileAtomically(project.GetAssetDirectory() / "Other.aster", "keep exact bytes");
+		Check(!second.Execute({{"command", "scene.save"}, {"path", "Other.aster"}}).at("ok").get<bool>(),
+			  "Save As cannot silently replace another document");
+		Check(Aster::ReadTextFile(project.GetAssetDirectory() / "Other.aster", 1024) == "keep exact bytes" &&
+				  second.GetScenePath() == "Scenes/Main.aster" && second.HasUnsavedChanges(),
+			  "Save As collision preserves destination and source identity");
+		Check(second.Execute({{"command", "scene.save"}, {"path", "Scenes/Recovered.aster"}}).at("ok") &&
+				  !second.HasUnsavedChanges(),
+			  "Save As recovers in-memory work after a conflict");
+		const auto recoveredPath = project.GetAssetDirectory() / "Scenes/Recovered.aster";
+		const auto recoveredBytes = Aster::ReadTextFile(recoveredPath, 64 * 1024);
+		const auto timestamp = std::filesystem::last_write_time(recoveredPath);
+		auto changed = recoveredBytes;
+		const auto nameOffset = changed.find("Second editor");
+		Check(nameOffset != std::string::npos, "Recovered scene contains the pending editor's name");
+		changed[nameOffset] = 's';
+		Aster::WriteTextFileAtomically(recoveredPath, changed);
+		std::filesystem::last_write_time(recoveredPath, timestamp);
+		Check(!second.Execute({{"command", "scene.save"}, {"path", "Scenes/Recovered.aster"}}).at("ok").get<bool>(),
+			  "Same-size, same-timestamp modification is detected by contents");
+		Check(Aster::ReadTextFile(recoveredPath, 64 * 1024) == changed, "Conflict leaves external contents intact");
+		Aster::WriteTextFileAtomically(recoveredPath, recoveredBytes + "\n");
+		Check(!second.Execute({{"command", "scene.save"}, {"path", "Scenes/Recovered.aster"}}).at("ok").get<bool>(),
+			  "Whitespace-only external changes are also conflicts");
+		std::filesystem::remove(recoveredPath);
+		Check(!second.Execute({{"command", "scene.save"}, {"path", "Scenes/Recovered.aster"}}).at("ok").get<bool>() &&
+				  !std::filesystem::exists(recoveredPath),
+			  "Deleted document cannot silently be recreated");
+		Aster::WriteTextFileAtomically(recoveredPath, recoveredBytes);
+		Check(second.Execute({{"command", "scene.save"}, {"path", "Scenes/Recovered.aster"}}).at("ok"),
+			  "Restoring exact baseline bytes allows retry");
+		Check(first.Execute({{"command", "scene.load"}, {"path", "Scenes/Recovered.aster"}}).at("ok"),
+			  "Reload accepts an external version explicitly");
+		Check(first.Execute({{"command", "scene.save"}, {"path", "Scenes/Recovered.aster"}}).at("ok"),
+			  "Reload establishes the new file baseline");
+		Check(original != firstSaved, "Fixture made a real persisted change");
+		Aster::SceneDocumentFile file;
+		auto smallScene = file.Load(recoveredPath);
+		Aster::WriteTextFileAtomically(root / "Malformed.aster", "{");
+		Rejects([&] { (void)file.Load(root / "Malformed.aster"); },
+				"Malformed load rejects before changing file baseline");
+		Aster::Scene oversized("Oversized");
+		for (int index = 0; index < 3000; ++index)
+		{
+			// Valid names expand sixfold when JSON-escaped, beyond the load limit.
+			(void)oversized.CreateEntity(std::string(4096, '\x01'));
+		}
+		const auto beforeOversized = Aster::ReadTextFile(recoveredPath, 64 * 1024);
+		bool sizeRejected = false;
+		try
+		{
+			file.Save(oversized, recoveredPath);
+		}
+		catch (const std::invalid_argument& error)
+		{
+			sizeRejected = std::string(error.what()).find("64 MiB") != std::string::npos;
+		}
+		Check(sizeRejected, "Oversized save reports its size limit before publication");
+		sizeRejected = false;
+		try
+		{
+			oversized.Save(recoveredPath);
+		}
+		catch (const std::invalid_argument& error)
+		{
+			sizeRejected = std::string(error.what()).find("64 MiB") != std::string::npos;
+		}
+		Check(sizeRejected, "Core scene persistence enforces the same reloadable size limit");
+		Check(Aster::ReadTextFile(recoveredPath, 64 * 1024) == beforeOversized,
+			  "Oversized save preserves existing contents");
+		file.Save(smallScene, recoveredPath);
+		Check(Aster::Scene::Load(recoveredPath).Serialize() == smallScene.Serialize(),
+			  "Failed load and oversized save preserve the original file baseline for retry");
+	}
+
+	void TestSessionClose(const std::filesystem::path& root)
+	{
+		const auto project = Aster::Project::Create(root / "Close", "Close");
+		Aster::CommandProcessor editor(project.GetFilePath());
+		Check(!editor.Execute({{"command", "session.close"}, {"discardChanges", "true"}}).at("ok").get<bool>() &&
+				  !editor.IsClosed(),
+			  "Discard must be a boolean even on a clean document");
+		Check(editor.Execute({{"command", "entity.create"}}).at("ok"), "Make dirty document");
+		const auto stable = editor.GetScene().Entities().front();
+		Check(!editor.Execute({{"command", "session.close"}}).at("ok").get<bool>() && !editor.IsClosed() &&
+				  editor.HasUnsavedChanges() && editor.GetScene().IsAlive(stable),
+			  "Dirty close rejection preserves authored state and session");
+		Check(editor.Execute({{"command", "history.begin"}}).at("ok"), "Begin edit before closing");
+		Check(!editor.Execute({{"command", "session.close"}, {"discardChanges", true}}).at("ok").get<bool>(),
+			  "Unfinished edits cannot be closed even with discard");
+		Check(editor.Execute({{"command", "history.cancel"}}).at("ok"), "Finish closing edit");
+		Check(editor.Execute({{"command", "simulation.start"}, {"audio", "offline"}}).at("ok"), "Play before closing");
+		Check(!editor.Execute({{"command", "session.close"}, {"discardChanges", true}}).at("ok").get<bool>() &&
+				  editor.IsPlaying() && !editor.IsClosed(),
+			  "Close requires explicit simulation teardown");
+		Check(editor.Execute({{"command", "simulation.stop"}}).at("ok"), "Stop before closing");
+		Check(editor.Execute({{"command", "session.close"}, {"discardChanges", true}}).at("ok") && editor.IsClosed(),
+			  "Explicit discard closes session");
+		Check(!editor.Execute({{"command", "entity.create"}}).at("ok").get<bool>(),
+			  "Closed session rejects further edits");
+		Aster::CommandProcessor clean(project.GetFilePath());
+		Check(clean.Execute({{"command", "session.close"}}).at("ok") && clean.IsClosed(),
+			  "Clean document closes directly");
+	}
+
 	void TestDocumentLifecycle(const std::filesystem::path& root)
 	{
 		const auto first = Aster::Project::Create(root / "First", "First");
@@ -298,4 +445,6 @@ void RunProjectTests()
 	TestJsonFiles(directory.Path);
 	TestProjects(directory.Path);
 	TestDocumentLifecycle(directory.Path);
+	TestSaveConflicts(directory.Path);
+	TestSessionClose(directory.Path);
 }

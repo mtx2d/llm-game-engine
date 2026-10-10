@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 import time
 
-from NativeWindow import WindowRepaints
+from NativeWindow import WindowFrames, WindowRepaints
 
 
 def project_editor_point(point, width=1440, height=900):
@@ -83,6 +83,9 @@ def main():
         raise RuntimeError("GUI integration requires DISPLAY and xdotool (use xvfb-run)")
     args.artifacts.mkdir(parents=True, exist_ok=True)
     screenshot = args.artifacts.resolve() / "EditorInteraction.ppm"
+    screenshot.unlink(missing_ok=True)
+    for previous in args.artifacts.glob("DocumentModal-*.json"):
+        previous.unlink()
     with tempfile.TemporaryDirectory(prefix="AsterGui-") as temporary:
         project = Path(temporary) / "Assets"
         shutil.copytree(args.assets, project)
@@ -123,26 +126,31 @@ def main():
                 [str(args.editor.resolve()), "--project", str(project), "--audio", "offline",
                  "--screenshot", str(screenshot)], stdout=log, stderr=log)
             frames = None
+            window_pixels = None
             window = None
             try:
                 def xdo(*arguments, check=True):
                     return subprocess.run(["xdotool", *map(str, arguments)], check=check,
                                           capture_output=True, text=True, timeout=5)
 
-                deadline = time.monotonic() + 30
-                while time.monotonic() < deadline:
-                    if process.poll() is not None:
-                        raise RuntimeError("Editor exited before showing its window")
-                    result = xdo("search", "--onlyvisible", "--pid", process.pid, check=False)
-                    if result.returncode == 0 and result.stdout.strip():
-                        window = result.stdout.splitlines()[0]
-                        break
-                    time.sleep(0.05)
+                def find_window():
+                    deadline = time.monotonic() + 30
+                    while time.monotonic() < deadline:
+                        if process.poll() is not None:
+                            raise RuntimeError("Editor exited before showing its window")
+                        result = xdo("search", "--onlyvisible", "--pid", process.pid, check=False)
+                        if result.returncode == 0 and result.stdout.strip():
+                            return result.stdout.splitlines()[0]
+                        time.sleep(0.05)
+                    raise AssertionError("Editor did not show its native window")
+
+                window = find_window()
                 assert window, "Editor did not show its native window"
                 xdo("windowfocus", window)
                 geometry = dict(line.split("=", 1) for line in
                                 xdo("getwindowgeometry", "--shell", window).stdout.splitlines())
                 frames = WindowRepaints(window, int(geometry["WIDTH"]), int(geometry["HEIGHT"]))
+                window_pixels = WindowFrames(window, int(geometry["WIDTH"]), int(geometry["HEIGHT"]))
                 frames.wait(process, timeout=30)
 
                 def input_event(*arguments):
@@ -157,20 +165,35 @@ def main():
                     input_event("mousedown", 1)
                     input_event("mouseup", 1)
 
-                def save_and_wait(predicate):
+                def wait_for_document_modal(stage, visible=True):
+                    points = [(round(490 + column * 460 / 47), round(385 + row * 130 / 14))
+                              for row in range(15) for column in range(48)]
+                    deadline = time.monotonic() + 15
+                    while time.monotonic() < deadline:
+                        assert process.poll() is None, "Editor exited before document confirmation"
+                        dark = sum(max(pixel) < 80 for pixel in window_pixels.sample_rgb(points))
+                        if (dark > 540) == visible:
+                            (args.artifacts / f"DocumentModal-{stage}.json").write_text(
+                                json.dumps({"dark_samples": dark, "samples": len(points), "visible": visible}))
+                            print(f"Document modal {stage}: {dark}/{len(points)} dark samples, visible={visible}", flush=True)
+                            return
+                        time.sleep(0.05)
+                    raise AssertionError("Unsaved changes dialog was not presented before interaction")
+
+                def save_and_wait(predicate, path=scene_path):
                     deadline = time.monotonic() + 10
-                    previous_write = scene_path.stat().st_mtime_ns
+                    previous_write = path.stat().st_mtime_ns if path.exists() else None
                     while time.monotonic() < deadline:
                         assert process.poll() is None, "Editor exited during interaction"
                         click(702, 21)
                         try:
-                            saved = json.loads(scene_path.read_text())
-                            if scene_path.stat().st_mtime_ns != previous_write and predicate(saved):
+                            saved = json.loads(path.read_text())
+                            if path.stat().st_mtime_ns != previous_write and predicate(saved):
                                 return saved
                         except (OSError, json.JSONDecodeError):
                             pass
                         time.sleep(0.1)
-                    (args.artifacts / "LastSaved.aster").write_text(scene_path.read_text())
+                    (args.artifacts / "LastSaved.aster").write_text(path.read_text() if path.exists() else "No saved file")
                     raise AssertionError("Native editor interaction did not persist the expected scene; see LastSaved.aster")
 
                 # Actual controls must reach the shared authoring backend and serialization.
@@ -266,6 +289,24 @@ def main():
                 def rename_selected(name):
                     replace_text(1190, 221, name)
 
+                def rename_document_camera(name):
+                    # Prove the model-backed hierarchy label changed before a
+                    # native close request. Repaint counts alone can finish
+                    # while a slower backend still presents the old document.
+                    points = [(x, y) for y in range(147, 157) for x in range(32, 230)]
+                    before = [min(pixel) > 170 for pixel in window_pixels.sample_rgb(points)]
+                    rename_selected(name)
+                    deadline = time.monotonic() + 15
+                    while time.monotonic() < deadline:
+                        assert process.poll() is None, "Editor exited before committing its camera name"
+                        after = [min(pixel) > 170 for pixel in window_pixels.sample_rgb(points)]
+                        changed = sum(a != b for a, b in zip(before, after))
+                        if changed > 25:
+                            print(f"Hierarchy committed {name}: {changed} changed text pixels", flush=True)
+                            return
+                        time.sleep(0.05)
+                    raise AssertionError(f"Camera rename did not reach the hierarchy: {changed} changed text pixels")
+
                 cube_pointer = tuple(map(round, project_editor_point(cube_center)))
                 click(300, 21)
                 click(*cube_pointer)  # A modal must also prevent changing viewport selection.
@@ -317,6 +358,7 @@ def main():
                 click(55, 151)
                 rename_selected("CancelledDocumentEdit")
                 click(658, 21)
+                wait_for_document_modal("Cancel")
                 click(860, 457)  # Cancel.
                 cancelled = save_and_wait(lambda scene: any(entity["ID"] == gallery["ID"] and
                                                            entity["Name"] == "CancelledDocumentEdit"
@@ -324,6 +366,7 @@ def main():
                 before_discard = scene_path.read_bytes()
                 rename_selected("DiscardedDocumentEdit")
                 click(658, 21)
+                wait_for_document_modal("Discard")
                 click(717, 457)  # Discard.
                 assert scene_path.read_bytes() == before_discard, "Discard unexpectedly saved the edit"
                 save_and_wait(lambda scene: scene == cancelled)
@@ -332,6 +375,7 @@ def main():
                 rename_selected("SavedBeforeOtherDocument")
                 replace_text(515, 21, "Scenes/DocumentTarget.aster")
                 click(658, 21)
+                wait_for_document_modal("Save")
                 click(567, 457)  # Save and continue.
                 saved_original = json.loads(scene_path.read_text())
                 assert any(entity["ID"] == gallery["ID"] and entity["Name"] == "SavedBeforeOtherDocument"
@@ -344,9 +388,74 @@ def main():
                 click(147, 21)  # Previous-document edits must not be reachable by Undo.
                 click(702, 21)
                 assert json.loads(target_path.read_text())["Name"] == "DocumentTarget", "Undo crossed document boundary"
+                click(55, 151)  # Select the target's sole camera entity.
+                rename_document_camera("CancelledCloseEdit")
                 close_window(window)
+                wait_for_document_modal("CloseCancel")
+                click(860, 457)
+                save_and_wait(lambda scene: scene["Entities"][0]["Name"] == "CancelledCloseEdit", target_path)
+                rename_document_camera("SavedOnClose")
+                external_bytes = target_path.read_bytes() + b"\n"
+                target_path.write_bytes(external_bytes)
+                close_window(window)
+                wait_for_document_modal("CloseConflictBefore")
+                click(567, 457)  # Conflict must keep the modal and editor alive.
+                wait_for_document_modal("CloseConflictAfter")
+                assert target_path.read_bytes() == external_bytes, "Failed close Save overwrote an external edit"
+                click(860, 457)
+                wait_for_document_modal("CloseConflictDismissed", visible=False)
+                recovered_path = project / "Scenes/CloseRecovered.aster"
+                replace_text(515, 21, "Scenes/CloseRecovered.aster")
+                save_and_wait(lambda scene: scene["Entities"][0]["Name"] == "SavedOnClose", recovered_path)
+                rename_document_camera("SavedOnCloseFinal")
+                close_window(window)
+                wait_for_document_modal("CloseSave")
+                # The last release can terminate the process; do not wait for
+                # another repaint from a window that has deliberately closed.
+                input_event("mousemove", "--window", window, 567, 457)
+                input_event("mousedown", 1)
+                xdo("mouseup", 1)
                 assert process.wait(timeout=15) == 0, "Editor reported a native or Vulkan validation error"
+                assert json.loads(recovered_path.read_text())["Entities"][0]["Name"] == "SavedOnCloseFinal", \
+                    "Save and continue on native close lost authored work"
+                assert target_path.read_bytes() == external_bytes, "Save As recovery changed the conflicted file"
+
+                # A separate real window exercises Discard as a terminal action.
+                frames.close()
+                frames = None
+                window_pixels.close()
+                window_pixels = None
+                teardown_scene = json.loads(recovered_path.read_text())
+                teardown_scene["Entities"][0]["Script"] = {"Path": "Scripts/CloseTeardown.lua", "Enabled": True}
+                recovered_path.write_text(json.dumps(teardown_scene))
+                (project / "Scripts/CloseTeardown.lua").write_text(
+                    'return {OnDestroy=function(self, entity) error("native close teardown sentinel") end}')
+                process = subprocess.Popen(
+                    [str(args.editor.resolve()), "--project", str(project), "--scene", "Scenes/CloseRecovered.aster",
+                     "--audio", "offline"], stdout=log, stderr=log)
+                window = find_window()
+                xdo("windowfocus", window)
+                frames = WindowRepaints(window, 1440, 900)
+                window_pixels = WindowFrames(window, 1440, 900)
+                frames.wait(process, timeout=30)
+                click(232, 21)  # The teardown error must keep this clean editor open.
+                close_window(window)
+                frames.wait(process)
+                save_and_wait(lambda scene: scene["Entities"][0]["Script"]["Path"] == "Scripts/CloseTeardown.lua",
+                              recovered_path)
+                click(55, 151)
+                rename_document_camera("DiscardedOnClose")
+                before_close = recovered_path.read_bytes()
+                close_window(window)
+                wait_for_document_modal("CloseDiscard")
+                input_event("mousemove", "--window", window, 717, 457)
+                input_event("mousedown", 1)
+                xdo("mouseup", 1)
+                assert process.wait(timeout=15) == 0, "Discard failed to close the editor gracefully"
+                assert recovered_path.read_bytes() == before_close, "Discard on close saved unwanted changes"
             finally:
+                if window_pixels:
+                    window_pixels.close()
                 if frames:
                     frames.close()
                 if process.poll() is None:
@@ -373,7 +482,8 @@ def main():
         colors = set(zip(pixels[0::3], pixels[1::3], pixels[2::3]))
         assert len(colors) > 500, "Editor screenshot lacks the rendered scene and GUI"
         print("Native editor transformed-mesh picking, modal isolation, move/rotate/scale with undo/cancel, "
-              "create, rename, undo/redo, save, play/stop and GPU readback passed")
+              "create, rename, undo/redo, save, play/stop, close Save/Discard/Cancel, conflict recovery, "
+              "teardown failure and GPU readback passed")
 
 
 if __name__ == "__main__":

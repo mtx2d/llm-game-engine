@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Aster/Editor/SceneDocumentFile.h>
 #include <Aster/Input/InputState.h>
 #include <Aster/Project/Project.h>
 #include <Aster/Scene/Scene.h>
@@ -40,6 +41,10 @@ namespace Aster
 			return m_ScenePath;
 		}
 		[[nodiscard]] bool HasUnsavedChanges() const;
+		[[nodiscard]] bool IsClosed() const noexcept
+		{
+			return m_IsClosed;
+		}
 
 	  private:
 		nlohmann::json Dispatch(const nlohmann::json& request);
@@ -53,6 +58,8 @@ namespace Aster
 		std::filesystem::path m_ProjectRoot;
 		SimulationSettings m_SimulationSettings;
 		Scene m_Scene;
+		SceneDocumentFile m_DocumentFile;
+		bool m_IsClosed = false;
 		std::optional<Project> m_Project;
 		std::optional<std::string> m_ScenePath;
 		nlohmann::json m_SavedScene;
