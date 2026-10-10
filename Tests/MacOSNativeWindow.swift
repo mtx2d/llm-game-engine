@@ -113,7 +113,9 @@ struct ProcessIdentity
 			"Cannot read launched process identity: errno \(errno)")
 		try Require(information.pbi_pid == UInt32(pid) && information.pbi_status != UInt32(SZOMB) &&
 			information.pbi_flags & UInt32(PROC_FLAG_INEXIT) == 0, "Launched process is exiting")
-		var buffer = [CChar](repeating: 0, count: Int(PROC_PIDPATHINFO_MAXSIZE))
+		// The SDK defines PROC_PIDPATHINFO_MAXSIZE as (4 * MAXPATHLEN), a
+		// compound macro Swift does not import. Use that documented expression.
+		var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
 		let length = buffer.withUnsafeMutableBytes
 		{
 			proc_pidpath(pid, $0.baseAddress!, UInt32($0.count))
