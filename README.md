@@ -1,6 +1,6 @@
 # Aster
 
-A native C++20 3D game engine built from [GameEngineDoc.md](GameEngineDoc.md). Automated software acceptance passes on Windows, macOS and Ubuntu; Windows and Ubuntu hardware audio validation remain open. The complete release requirements, evidence and limitations are tracked in [ImplementationStatus.md](docs/ImplementationStatus.md).
+A native C++20 3D game engine built from [GameEngineDoc.md](GameEngineDoc.md). Production development is active, using [Hazel](https://github.com/TheCherno/Hazel) as an architectural reference. [ProductionPlan.md](docs/ProductionPlan.md) tracks the complete upgrade; [ImplementationStatus.md](docs/ImplementationStatus.md) records verified behavior and unfinished requirements. The previous baseline passed automated platform checks; that evidence does not establish production readiness of new work.
 
 The implementation includes a scene library, Lua/Bullet/miniaudio simulation, a native graphical editor with transform gizmos, a JSON command interface, and a separate shipping runtime. The GLFW/NVRHI Vulkan renderer imports glTF materials and textures, renders PBR lighting into HDR, processes Poly Haven HDRIs for image-based lighting, and adds soft shadow maps and SSAO. These rendering features have automated GPU image checks. Game export produces a relocatable asset package and runtime. Remaining quality, platform, and release gates are tracked in the implementation status.
 
@@ -18,6 +18,7 @@ For the isolated toolchain, prefix each command with `bash scripts/LocalBuild.sh
 
 ```sh
 build/debug/AsterEditor --project Assets
+build/debug/AsterEditor --project Aster.asterproj
 build/debug/AsterEditor --automation Assets
 build/debug/AsterRuntime --scene Assets/Scenes/FeatureGallery.aster --project Assets
 build/debug/AsterRuntime --scene Assets/Scenes/FeatureGallery.aster --project Assets --steps 120
@@ -59,12 +60,14 @@ cmake --build --preset debug --parallel 4
 ctest --preset debug -R AssetCorpus
 ```
 
-Native CPU suites pass on all three platforms, as do Linux ASan/UBSan checks. [The validated CI run](https://github.com/mtx2d/llm-game-engine/actions/runs/37993581848) passed all 18 Linux integrated tests and all 16 Windows/macOS tests, including GPU output, window lifecycle, native editor authoring and keyboard gameplay. Relocated graphical exports also pass on all three platforms, including macOS Release. Windows/macOS native interaction tests require an interactive desktop; the macOS helper checks existing Accessibility, PostEvent and ScreenCapture permissions without prompting or changing security settings.
+The previous baseline passed native CPU suites on all three platforms and Linux ASan/UBSan checks. [Its validated CI run](https://github.com/mtx2d/llm-game-engine/actions/runs/37993581848) passed all 18 Linux integrated tests and all 16 Windows/macOS tests, including GPU output, window lifecycle, native editor authoring and keyboard gameplay. Relocated graphical exports also passed on all three platforms, including macOS Release. New production work requires fresh validation. Windows/macOS native interaction tests require an interactive desktop; the macOS helper checks existing Accessibility, PostEvent and ScreenCapture permissions without prompting or changing security settings.
 
 Graphics validation uses `scripts/SetupWindowsVulkan.ps1` on Windows and `scripts/BootstrapMacOS.sh` on macOS; both fetch verified toolchains into `build/`. Run Windows setup in a non-elevated PowerShell 7 shell; its automatic driver registration is restricted to ephemeral GitHub-hosted runners. Windows CI uses SwiftShader, so these results do not establish a physical Windows GPU matrix. macOS uses MoltenVK and requires a Metal-capable device; native CI passed on Apple's paravirtual device. Linux validation includes an NVIDIA GTX 1080 and llvmpipe.
+
+[Projects.md](docs/Projects.md) describes project creation, portable `.asterproj` files, startup scenes and unsaved-document behavior. `AsterEditor --create-project /path/to/NewGame "My Game"` creates a project with a camera scene. Editor and runtime both accept `--project /path/to/NewGame/Project.asterproj`.
 
 ## Development
 
 Follow [AGENTS.md](AGENTS.md) and repository workflows in `skills/`. Review and test changes before committing. Third-party revisions and archive hashes are in `cmake/Dependencies.lock.json`. Engine code follows Hazel naming conventions.
 
-Windows/Ubuntu hardware audio is the remaining release acceptance check. The workspace exposes only virtual output, and hosted Windows/Linux runners have no audio backend. macOS device-clock playback passed in CI, and the user separately reported successful manual macOS listening. See the implementation status for the corrected Windows editor synchronization, consecutive native test passes, complete evidence and supported-domain limits.
+Windows/Ubuntu hardware audio remains unverified. The workspace exposes only virtual output, and hosted Windows/Linux runners have no audio backend. macOS device-clock playback passed in CI, and the user separately reported successful manual macOS listening. Production project, asset, runtime, renderer, scalability and release requirements remain open as tracked in the production plan.

@@ -75,10 +75,18 @@ int main(int argc, char** argv)
 		{
 			return RunAutomation(argv[2]);
 		}
+		if (argc == 4 && std::string(argv[1]) == "--create-project")
+		{
+			const auto project = Aster::Project::Create(argv[2], argv[3]);
+			std::cout << nlohmann::json({{"project", project.GetFilePath().generic_string()}}).dump() << '\n';
+			return 0;
+		}
 		if (argc == 2 && std::string(argv[1]) == "--help")
 		{
-			std::cout << "AsterEditor --automation <project-directory>\n"
-					  << "AsterEditor [--project <asset-directory>] [--scene <relative-scene>] [--frames N] "
+			std::cout << "AsterEditor --automation <asset-directory|project.asterproj>\n"
+					  << "AsterEditor --create-project <new-directory> <name>\n"
+					  << "AsterEditor [--project <asset-directory|project.asterproj>] [--scene <relative-scene>] "
+						 "[--frames N] "
 						 "[--screenshot <image.ppm>] [--audio device|offline|disabled] [--play]\n";
 			return 0;
 		}
@@ -152,11 +160,16 @@ int main(int argc, char** argv)
 				throw std::invalid_argument("Unknown argument: " + argument);
 			}
 		}
+		Aster::CommandProcessor processor(project, simulationSettings);
+		project = processor.GetAssetRoot();
+		if (!scenePath && processor.GetScenePath())
+		{
+			scenePath = *processor.GetScenePath();
+		}
 		if (!scenePath && std::filesystem::is_regular_file(project / "Scenes/FeatureGallery.aster"))
 		{
 			scenePath = "Scenes/FeatureGallery.aster";
 		}
-		Aster::CommandProcessor processor(project, simulationSettings);
 		Aster::AssetImporter importer(project);
 		Aster::RendererOptions options;
 		options.Headless = false;

@@ -9,6 +9,7 @@ void RunCommandTests();
 void RunAssetTests();
 void RunEnvironmentTests();
 void RunViewportTests();
+void RunProjectTests();
 
 int main(int argc, char** argv)
 {
@@ -45,8 +46,13 @@ int main(int argc, char** argv)
 			RunViewportTests();
 			std::cout << "Viewport tests passed\n";
 		}
+		if (suite == "project" || suite == "all")
+		{
+			RunProjectTests();
+			std::cout << "Project tests passed\n";
+		}
 		if (suite != "scene" && suite != "simulation" && suite != "commands" && suite != "assets" &&
-			suite != "environment" && suite != "viewport" && suite != "all")
+			suite != "environment" && suite != "viewport" && suite != "project" && suite != "all")
 		{
 			throw std::invalid_argument("Unknown test suite");
 		}

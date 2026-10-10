@@ -79,9 +79,11 @@ void RunCommandTests()
 	}
 
 	Check(editor.Execute({{"command", "scene.save"}, {"path", "Test.aster"}}).at("ok"), "Save scene");
-	Check(editor.Execute({{"command", "scene.new"}, {"name", "Empty"}}).at("ok"), "New scene");
+	Check(editor.Execute({{"command", "scene.new"}, {"name", "Empty"}, {"discardChanges", true}}).at("ok"),
+		  "New scene");
 	Check(editor.GetScene().Size() == 0, "New scene empty");
-	Check(editor.Execute({{"command", "scene.load"}, {"path", "Test.aster"}}).at("ok"), "Load scene");
+	Check(editor.Execute({{"command", "scene.load"}, {"path", "Test.aster"}, {"discardChanges", true}}).at("ok"),
+		  "Load scene");
 	Check(editor.GetScene().Serialize() == after, "Load persisted scene");
 
 	Check(!editor.Execute({{"command", "simulation.start"}, {"audio", "unknown"}}).at("ok").get<bool>(),

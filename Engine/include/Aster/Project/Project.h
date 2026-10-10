@@ -1,0 +1,44 @@
+#pragma once
+
+#include <nlohmann/json_fwd.hpp>
+
+#include <filesystem>
+#include <string>
+
+namespace Aster
+{
+	struct ProjectConfig
+	{
+		std::string Name = "Untitled";
+		std::filesystem::path AssetDirectory = "Assets";
+		std::filesystem::path StartScene = "Scenes/Main.aster";
+	};
+
+	// A project owns its configuration and paths; there is no global active project.
+	// Serialized paths are portable and relative to the project or its asset root.
+	class Project
+	{
+	  public:
+		[[nodiscard]] static Project Load(const std::filesystem::path& filePath);
+		// Destination must be absent, with an existing parent. Publishes a complete
+		// project containing a camera scene through a sibling staging directory.
+		[[nodiscard]] static Project Create(const std::filesystem::path& directory, std::string name);
+		[[nodiscard]] static ProjectConfig DeserializeConfig(const nlohmann::json& document);
+		[[nodiscard]] nlohmann::json Serialize() const;
+		// Validates configuration and the startup scene, then saves before changing
+		// this instance. A rejected update preserves both the file and configuration.
+		void UpdateConfig(ProjectConfig config);
+		[[nodiscard]] const ProjectConfig& GetConfig() const noexcept;
+		[[nodiscard]] const std::filesystem::path& GetFilePath() const noexcept;
+		[[nodiscard]] const std::filesystem::path& GetAssetDirectory() const noexcept;
+		[[nodiscard]] std::filesystem::path ResolveAssetPath(const std::filesystem::path& relative) const;
+
+	  private:
+		Project(std::filesystem::path filePath, ProjectConfig config);
+		std::filesystem::path ValidateConfig(const ProjectConfig& config) const;
+
+		std::filesystem::path m_FilePath;
+		std::filesystem::path m_AssetDirectory;
+		ProjectConfig m_Config;
+	};
+} // namespace Aster

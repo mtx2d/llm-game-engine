@@ -112,6 +112,11 @@ def main():
         ])
         baseline["NextEntityID"] = parent_id + 2
         scene_path.write_text(json.dumps(baseline))
+        target_path = project / "Scenes/DocumentTarget.aster"
+        target = dict(baseline, Name="DocumentTarget",
+                      Entities=[entity for entity in baseline["Entities"] if "Camera" in entity])
+        target_path.write_text(json.dumps(target))
+        target_bytes = target_path.read_bytes()
         (args.artifacts / "LastSaved.aster").unlink(missing_ok=True)
         with (args.artifacts / "EditorInteraction.log").open("w+") as log:
             process = subprocess.Popen(
@@ -247,16 +252,19 @@ def main():
                 drag_path(axis_path, cancel_at=4)
                 save_and_wait(lambda scene: gallery_transform(scene) == original_transform)
 
-                def rename_selected(name):
-                    click(1190, 221)
+                def replace_text(x, y, text):
+                    click(x, y)
                     # Keep modifiers held across acknowledged UI frames. Packing
                     # the chord can release Control before the queued A is consumed.
                     input_event("keydown", "Control_L")
                     input_event("keydown", "a")
                     input_event("keyup", "a")
                     input_event("keyup", "Control_L")
-                    input_event("type", "--clearmodifiers", "--delay", 20, name)
+                    input_event("type", "--clearmodifiers", "--delay", 20, text)
                     input_event("key", "Return")
+
+                def rename_selected(name):
+                    replace_text(1190, 221, name)
 
                 cube_pointer = tuple(map(round, project_editor_point(cube_center)))
                 click(300, 21)
@@ -302,6 +310,40 @@ def main():
                 original_sphere = next(entity for entity in authored["Entities"] if entity["Name"] == "FallingSphere")
                 stopped_sphere = next(entity for entity in stopped["Entities"] if entity["Name"] == "FallingSphere")
                 assert stopped_sphere == original_sphere, "GUI stop did not restore authored simulation state"
+
+                # Unsaved replacement has three real native UI paths. Cancel must
+                # retain memory, Discard must retain disk, and Save and continue
+                # must save the original document even when the path field names another.
+                click(55, 151)
+                rename_selected("CancelledDocumentEdit")
+                click(658, 21)
+                click(860, 457)  # Cancel.
+                cancelled = save_and_wait(lambda scene: any(entity["ID"] == gallery["ID"] and
+                                                           entity["Name"] == "CancelledDocumentEdit"
+                                                           for entity in scene["Entities"]))
+                before_discard = scene_path.read_bytes()
+                rename_selected("DiscardedDocumentEdit")
+                click(658, 21)
+                click(717, 457)  # Discard.
+                assert scene_path.read_bytes() == before_discard, "Discard unexpectedly saved the edit"
+                save_and_wait(lambda scene: scene == cancelled)
+                # Reload clears selection; select Gallery for the next edit.
+                click(55, 151)
+                rename_selected("SavedBeforeOtherDocument")
+                replace_text(515, 21, "Scenes/DocumentTarget.aster")
+                click(658, 21)
+                click(567, 457)  # Save and continue.
+                saved_original = json.loads(scene_path.read_text())
+                assert any(entity["ID"] == gallery["ID"] and entity["Name"] == "SavedBeforeOtherDocument"
+                           for entity in saved_original["Entities"]), "Save and continue did not persist original document"
+                assert target_path.read_bytes() == target_bytes, "Save and continue overwrote the load target"
+                previous_target_write = target_path.stat().st_mtime_ns
+                click(702, 21)
+                assert target_path.stat().st_mtime_ns != previous_target_write, "Target document was not activated"
+                assert json.loads(target_path.read_text())["Name"] == "DocumentTarget"
+                click(147, 21)  # Previous-document edits must not be reachable by Undo.
+                click(702, 21)
+                assert json.loads(target_path.read_text())["Name"] == "DocumentTarget", "Undo crossed document boundary"
                 close_window(window)
                 assert process.wait(timeout=15) == 0, "Editor reported a native or Vulkan validation error"
             finally:

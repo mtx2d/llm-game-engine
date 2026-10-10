@@ -31,13 +31,53 @@ namespace Aster
 	} // namespace
 
 	CommandProcessor::CommandProcessor(std::filesystem::path projectRoot, SimulationSettings simulationSettings)
-		: m_ProjectRoot(std::filesystem::weakly_canonical(std::move(projectRoot))),
-		  m_SimulationSettings(simulationSettings)
+		: m_ProjectRoot(std::move(projectRoot)), m_SimulationSettings(simulationSettings)
 	{
+		m_SavedScene = m_Scene.Serialize();
+		if (m_ProjectRoot.extension() == ".asterproj" || std::filesystem::is_regular_file(m_ProjectRoot))
+		{
+			OpenProject(Project::Load(m_ProjectRoot));
+			return;
+		}
+		m_ProjectRoot = std::filesystem::weakly_canonical(m_ProjectRoot);
 		if (!std::filesystem::is_directory(m_ProjectRoot))
 		{
 			throw std::invalid_argument("Project root must be an existing directory");
 		}
+	}
+
+	bool CommandProcessor::HasUnsavedChanges() const
+	{
+		return (IsPlaying() ? m_PlaySnapshot : m_Scene.Serialize()) != m_SavedScene;
+	}
+
+	void CommandProcessor::RequireDocumentChange(const nlohmann::json& request) const
+	{
+		RequireEditing();
+		if (m_EditTransaction)
+		{
+			throw std::logic_error("Finish the current edit before changing documents");
+		}
+		if (HasUnsavedChanges() && !request.value("discardChanges", false))
+		{
+			throw std::logic_error("Unsaved changes: save the scene or explicitly set discardChanges to true");
+		}
+	}
+
+	void CommandProcessor::OpenProject(Project project)
+	{
+		auto scene = Scene::Load(project.ResolveAssetPath(project.GetConfig().StartScene));
+		auto saved = scene.Serialize();
+		auto scenePath = project.GetConfig().StartScene.generic_string();
+		auto assetRoot = project.GetAssetDirectory();
+		// All filesystem operations, validation and allocations precede publication.
+		m_Project = std::move(project);
+		m_ProjectRoot = std::move(assetRoot);
+		m_Scene = std::move(scene);
+		m_ScenePath = std::move(scenePath);
+		m_SavedScene = std::move(saved);
+		m_Undo.clear();
+		m_Redo.clear();
 	}
 
 	void CommandProcessor::UpdateSimulation(double deltaTime)
@@ -146,15 +186,41 @@ namespace Aster
 		const std::string command = request.at("command").get<std::string>();
 		if (command == "help")
 		{
-			return {"scene.get",		"scene.new",	   "scene.replace",	  "scene.load",		"scene.save",
-					"entity.create",	"entity.destroy",  "entity.parent",	  "entity.patch",	"prefab.spawn",
-					"history.undo",		"history.redo",	   "history.begin",	  "history.commit", "history.cancel",
-					"simulation.start", "simulation.step", "simulation.stop", "input.set",		"project.export",
-					"scene.environment"};
+			return {"scene.get",		 "scene.new",		"scene.replace",   "scene.load",	 "scene.save",
+					"entity.create",	 "entity.destroy",	"entity.parent",   "entity.patch",	 "prefab.spawn",
+					"history.undo",		 "history.redo",	"history.begin",   "history.commit", "history.cancel",
+					"simulation.start",	 "simulation.step", "simulation.stop", "input.set",		 "project.export",
+					"scene.environment", "scene.status",	"project.get",	   "project.open",	 "project.create"};
+		}
+		if (command == "scene.status")
+		{
+			return {{"path", m_ScenePath ? nlohmann::json(*m_ScenePath) : nlohmann::json(nullptr)},
+					{"dirty", HasUnsavedChanges()},
+					{"editing", m_EditTransaction.has_value()},
+					{"playing", IsPlaying()}};
+		}
+		if (command == "project.get")
+		{
+			return {{"path",
+					 m_Project ? nlohmann::json(m_Project->GetFilePath().generic_string()) : nlohmann::json(nullptr)},
+					{"assets", m_ProjectRoot.generic_string()},
+					{"config", m_Project ? m_Project->Serialize() : nlohmann::json(nullptr)}};
+		}
+		if (command == "project.open" || command == "project.create")
+		{
+			RequireDocumentChange(request);
+			const auto path = request.at("path").get<std::string>();
+			OpenProject(command == "project.open" ? Project::Load(path)
+												  : Project::Create(path, request.at("name").get<std::string>()));
+			return {{"path", m_Project->GetFilePath().generic_string()}, {"assets", m_ProjectRoot.generic_string()}};
 		}
 		if (command == "project.export")
 		{
 			RequireEditing();
+			if (m_EditTransaction || HasUnsavedChanges())
+			{
+				throw std::logic_error("Finish editing and save the scene before exporting");
+			}
 			ExportSettings settings;
 			settings.AssetRoot = m_ProjectRoot;
 			settings.ScenePath = request.at("scene").get<std::string>();
@@ -236,7 +302,15 @@ namespace Aster
 		if (command == "scene.save")
 		{
 			RequireEditing();
-			m_Scene.Save(ResolvePath(request.at("path").get<std::string>()));
+			if (m_EditTransaction)
+			{
+				throw std::logic_error("Finish the current edit before saving");
+			}
+			auto path = request.at("path").get<std::string>();
+			auto saved = m_Scene.Serialize();
+			m_Scene.Save(ResolvePath(path));
+			m_ScenePath = std::move(path);
+			m_SavedScene = std::move(saved);
 			return {{"saved", true}};
 		}
 		if (command == "simulation.start")
@@ -313,6 +387,26 @@ namespace Aster
 			return {{"playing", false}, {"errors", errors}};
 		}
 		RequireEditing();
+		if (command == "scene.new" || command == "scene.load")
+		{
+			RequireDocumentChange(request);
+			std::optional<std::string> scenePath;
+			nlohmann::json saved;
+			auto scene = command == "scene.new" ? Scene(request.value("name", "Untitled"))
+												: Scene::Load(ResolvePath(request.at("path").get<std::string>()));
+			if (command == "scene.load")
+			{
+				scenePath = request.at("path").get<std::string>();
+				saved = scene.Serialize();
+			}
+			m_Scene = std::move(scene);
+			m_ScenePath = std::move(scenePath);
+			m_SavedScene = std::move(saved);
+			// History belongs to a document; it cannot resurrect another scene.
+			m_Undo.clear();
+			m_Redo.clear();
+			return nlohmann::json::object();
+		}
 		if (command == "history.begin")
 		{
 			if (m_EditTransaction)
@@ -365,11 +459,7 @@ namespace Aster
 		nlohmann::json result = nlohmann::json::object();
 		try
 		{
-			if (command == "scene.new")
-			{
-				m_Scene = Scene(request.value("name", "Untitled"));
-			}
-			else if (command == "scene.replace")
+			if (command == "scene.replace")
 			{
 				m_Scene.ReplaceFromJson(request.at("scene"));
 			}
@@ -383,10 +473,6 @@ namespace Aster
 				auto document = before;
 				document["Environment"].merge_patch(environment);
 				m_Scene.ReplaceFromJson(document);
-			}
-			else if (command == "scene.load")
-			{
-				m_Scene = Scene::Load(ResolvePath(request.at("path").get<std::string>()));
 			}
 			else if (command == "entity.create")
 			{

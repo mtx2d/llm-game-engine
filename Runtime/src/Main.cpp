@@ -1,4 +1,6 @@
 #include <Aster/Core/ExecutablePath.h>
+#include <Aster/Core/JsonFile.h>
+#include <Aster/Project/Project.h>
 #include <Aster/Scene/Scene.h>
 #include <Aster/Simulation/Simulation.h>
 #include <nlohmann/json.hpp>
@@ -51,6 +53,7 @@ int main(int argc, char** argv)
 			{
 				std::cout
 					<< "AsterRuntime --scene <scene> [--project <asset-root>] [--steps N] [--output <state.json>]\n"
+					<< "AsterRuntime --project <project.asterproj> [--scene <relative-override>] [--steps N]\n"
 					<< "--steps runs deterministic headless simulation; add --window for a bounded graphical run.\n"
 					<< "--validation enables Vulkan/NVRHI development checks for a graphical run.\n"
 					<< "Without --steps, the graphical game runs until closed. Exported games read adjacent "
@@ -90,6 +93,13 @@ int main(int argc, char** argv)
 				throw std::invalid_argument("Unknown argument: " + argument);
 			}
 		}
+		if (explicitProject &&
+			(projectRoot.extension() == ".asterproj" || std::filesystem::is_regular_file(projectRoot)))
+		{
+			const auto project = Aster::Project::Load(projectRoot);
+			projectRoot = project.GetAssetDirectory();
+			scenePath = project.ResolveAssetPath(scenePath.empty() ? project.GetConfig().StartScene : scenePath);
+		}
 		if (scenePath.empty())
 		{
 			const auto executableDirectory = Aster::GetExecutablePath().parent_path();
@@ -106,16 +116,11 @@ int main(int argc, char** argv)
 			}
 #endif
 			const auto manifestPath = resourceDirectory / "Game.json";
-			if (std::filesystem::exists(manifestPath) && std::filesystem::file_size(manifestPath) > 65536)
-			{
-				throw std::invalid_argument("Game manifest exceeds 64 KiB");
-			}
-			std::ifstream input(manifestPath);
-			if (!input)
+			if (!std::filesystem::exists(manifestPath))
 			{
 				throw std::invalid_argument("Specify --scene or provide Game.json next to the executable; see --help");
 			}
-			const auto manifest = nlohmann::json::parse(input);
+			const auto manifest = Aster::ReadJsonFile(manifestPath, 65536, 8);
 			for (const auto& [key, value] : manifest.items())
 			{
 				(void)value;

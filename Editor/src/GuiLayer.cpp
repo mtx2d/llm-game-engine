@@ -160,7 +160,11 @@ namespace Aster
 					});
 				if (scenePath)
 				{
-					Execute({{"command", "scene.load"}, {"path", scenePath->generic_string()}});
+					const auto loaded = Execute({{"command", "scene.load"}, {"path", scenePath->generic_string()}});
+					if (!loaded.value("ok", false))
+					{
+						throw std::runtime_error(loaded.at("error").get<std::string>());
+					}
 					for (const auto entity : m_Commands.GetScene().Entities())
 					{
 						if (!m_Selected || m_Commands.GetScene().Get(entity).MeshRenderer)
@@ -271,6 +275,7 @@ namespace Aster
 			DrawGizmo();
 			PickViewport();
 			DrawExport();
+			DrawDocumentChange();
 			DrawStatus();
 			ImGui::Render();
 		}
@@ -372,9 +377,7 @@ namespace Aster
 			ImGui::BeginDisabled(m_Commands.IsPlaying());
 			if (ImGui::Button("New"))
 			{
-				Execute({{"command", "scene.new"}, {"name", "Untitled"}});
-				m_Selected = 0;
-				SetText(m_ScenePath, "NewScene.aster");
+				RequestDocumentChange({{"command", "scene.new"}, {"name", "Untitled"}});
 			}
 			ImGui::SameLine();
 			if (ImGui::Button("Undo"))
@@ -404,8 +407,7 @@ namespace Aster
 			ImGui::SameLine();
 			if (ImGui::Button("Load"))
 			{
-				Execute({{"command", "scene.load"}, {"path", m_ScenePath.data()}});
-				m_Selected = 0;
+				RequestDocumentChange({{"command", "scene.load"}, {"path", m_ScenePath.data()}});
 			}
 			ImGui::SameLine();
 			if (ImGui::Button("Save"))
@@ -415,7 +417,7 @@ namespace Aster
 			ImGui::EndDisabled();
 			ImGui::TextDisabled("Right mouse + WASD: fly   Q/E: descend/ascend   Shift: faster   Mouse wheel: speed");
 			ImGui::SameLine();
-			ImGui::Text(" | %s", m_Commands.GetScene().GetName().c_str());
+			ImGui::Text(" | %s%s", m_Commands.GetScene().GetName().c_str(), m_Commands.HasUnsavedChanges() ? " *" : "");
 			ImGui::End();
 			if (!io.WantTextInput && io.KeyCtrl && !m_Commands.IsPlaying())
 			{
@@ -436,7 +438,78 @@ namespace Aster
 
 		void Save()
 		{
+			FinishEdit(true);
 			Execute({{"command", "scene.save"}, {"path", m_ScenePath.data()}});
+		}
+
+		void ChangeDocument(Json request)
+		{
+			if (Execute(std::move(request)).value("ok", false))
+			{
+				SetText(m_ScenePath, m_Commands.GetScenePath().value_or("NewScene.aster"));
+				m_Selected = 0;
+			}
+		}
+
+		void RequestDocumentChange(Json request)
+		{
+			FinishEdit(true);
+			if (m_Commands.HasUnsavedChanges())
+			{
+				m_PendingDocumentChange = std::move(request);
+			}
+			else
+			{
+				ChangeDocument(std::move(request));
+			}
+		}
+
+		void DrawDocumentChange()
+		{
+			if (m_PendingDocumentChange)
+			{
+				ImGui::OpenPopup("Unsaved changes");
+			}
+			const auto display = ImGui::GetIO().DisplaySize;
+			ImGui::SetNextWindowPos({display.x / 2, display.y / 2}, ImGuiCond_Appearing, {0.5f, 0.5f});
+			ImGui::SetNextWindowSize({480, 150});
+			if (ImGui::BeginPopupModal("Unsaved changes", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove))
+			{
+				ImGui::TextUnformatted("Save your changes before opening another scene?");
+				bool proceed = false;
+				ImGui::SetCursorPos({12, 70});
+				ImGui::BeginDisabled(!m_Commands.GetScenePath());
+				if (ImGui::Button("Save and continue", {150, 24}))
+				{
+					proceed =
+						Execute({{"command", "scene.save"}, {"path", *m_Commands.GetScenePath()}}).value("ok", false);
+				}
+				ImGui::EndDisabled();
+				ImGui::SameLine();
+				if (ImGui::Button("Discard", {135, 24}))
+				{
+					proceed = true;
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("Cancel", {135, 24}) || ImGui::IsKeyPressed(ImGuiKey_Escape))
+				{
+					m_PendingDocumentChange.reset();
+					ImGui::CloseCurrentPopup();
+				}
+				if (!m_Commands.GetScenePath())
+				{
+					ImGui::TextUnformatted("Cancel and save the new scene to choose its filename.");
+				}
+				if (proceed && m_PendingDocumentChange)
+				{
+					auto request = std::move(*m_PendingDocumentChange);
+					m_PendingDocumentChange.reset();
+					request["discardChanges"] = true;
+					ChangeDocument(std::move(request));
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::EndPopup();
+			}
 		}
 
 		void AcceptParentDrop(std::uint64_t parent)
@@ -781,11 +854,7 @@ namespace Aster
 			}
 			if (extension == ".aster")
 			{
-				if (Execute({{"command", "scene.load"}, {"path", relative.generic_string()}}).value("ok", false))
-				{
-					SetText(m_ScenePath, relative.generic_string());
-					m_Selected = 0;
-				}
+				RequestDocumentChange({{"command", "scene.load"}, {"path", relative.generic_string()}});
 				return;
 			}
 			if (extension == ".json")
@@ -1219,6 +1288,7 @@ namespace Aster
 		ImGuizmo::OPERATION m_GizmoOperation = ImGuizmo::TRANSLATE;
 		bool m_LocalGizmo = false;
 		bool m_ShowExport = false;
+		std::optional<Json> m_PendingDocumentChange;
 		EditKind m_EditKind = EditKind::None;
 		bool m_CancelGizmoUntilRelease = false;
 	};

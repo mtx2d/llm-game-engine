@@ -1,21 +1,13 @@
 #include "Aster/Scene/Scene.h"
+#include <Aster/Core/JsonFile.h>
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cmath>
-#include <fstream>
 #include <initializer_list>
-#include <random>
 #include <stdexcept>
 #include <string_view>
-
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <Windows.h>
-#endif
 
 namespace Aster
 {
@@ -343,54 +335,11 @@ namespace Aster
 
 	void Scene::Save(const std::filesystem::path& path) const
 	{
-		const auto serialized = Serialize().dump(2);
-		std::random_device random;
-		auto temporary = path;
-		temporary += ".aster-tmp-" + std::to_string(random()) + "-" + std::to_string(random());
-		try
-		{
-			std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-			output.exceptions(std::ios::badbit | std::ios::failbit);
-			output.write(serialized.data(), static_cast<std::streamsize>(serialized.size()));
-			output.flush();
-			output.close();
-#ifdef _WIN32
-			if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-			{
-				throw std::system_error(static_cast<int>(GetLastError()), std::system_category(),
-										"Cannot replace scene file");
-			}
-#else
-			std::filesystem::rename(temporary, path);
-#endif
-		}
-		catch (...)
-		{
-			std::error_code cleanupError;
-			std::filesystem::remove(temporary, cleanupError);
-			throw;
-		}
+		WriteTextFileAtomically(path, Serialize().dump(2));
 	}
 
 	Scene Scene::Load(const std::filesystem::path& path)
 	{
-		constexpr auto maximumFileBytes = 64ULL * 1024ULL * 1024ULL;
-		if (std::filesystem::file_size(path) > maximumFileBytes)
-		{
-			throw std::invalid_argument("Scene file exceeds the 64 MiB limit");
-		}
-		std::ifstream input(path, std::ios::binary);
-		if (!input)
-		{
-			throw std::runtime_error("Cannot open scene file: " + path.string());
-		}
-		Json document;
-		input >> document;
-		input >> std::ws;
-		if (!input.eof())
-		{
-			throw std::invalid_argument("Unexpected trailing content in scene file");
-		}
-		return Deserialize(document);
+		return Deserialize(ReadJsonFile(path, 64ULL * 1024ULL * 1024ULL));
 	}
 } // namespace Aster

@@ -2,7 +2,7 @@
 
 The command editor exports the supplied platform's shipping runtime and the project's complete asset directory. Linux and Windows packages contain `AsterGame` (`AsterGame.exe` on Windows), `Game.json`, `Assets/`, and `ThirdParty/`. macOS exports `AsterGame.app`, with the executable in `Contents/MacOS` and the manifest, assets, and notices in `Contents/Resources`. The runtime does not link the editor command or ImGui/ImGuizmo libraries, and no editor executable is copied.
 
-Send this JSON request to `AsterEditor --automation <asset-root>`, replacing the absolute paths:
+Send this JSON request to `AsterEditor --automation <asset-root|project.asterproj>`, replacing the absolute paths. A project file selects its configured asset root. Finish edits and save the current document before exporting:
 
 ```json
 {"command":"project.export","scene":"Scenes/FeatureGallery.aster","runtime":"/path/to/AsterRuntime","notices":"/path/to/ThirdParty","output":"/path/to/NewGame"}

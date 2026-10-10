@@ -78,6 +78,32 @@ def run_workflow(driver, scene_path, artifacts):
         save_image(artifacts / "EditorFailure.ppm", driver.capture())
         raise AssertionError("Native editor did not persist the expected state; see LastSaved.aster")
 
+    modal_samples = []
+
+    def wait_for_document_modal(stage, timeout=15):
+        # The feature viewport is bright; the centered dialog has a dark body.
+        # Require its actual presented pixels before clicking its controls. A
+        # capture immediately following native input can still be the prior frame.
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            driver.assert_alive()
+            image = driver.capture()
+            pixel_width, pixel_height, pixels = image
+            dark = 0
+            for row in range(15):
+                y = int((height / 2 - 65 + row * 130 / 14) * pixel_height / height)
+                for column in range(48):
+                    x = int((width / 2 - 230 + column * 460 / 47) * pixel_width / width)
+                    offset = (y * pixel_width + x) * 3
+                    dark += max(pixels[offset:offset + 3]) < 80
+            if dark > 540:
+                save_image(artifacts / f"UnsavedChanges-{stage}.ppm", image)
+                modal_samples.append({"stage": stage, "dark_samples": dark, "samples": 720})
+                return
+            time.sleep(0.05)
+        save_image(artifacts / "UnsavedChanges-failed.ppm", driver.capture())
+        raise AssertionError("Unsaved changes dialog was not presented before native interaction")
+
     # A newly visible native window can still expose desktop pixels before its
     # first presentation. Prove that the actual editor handled a Save click and
     # wrote the unchanged fixture before sending the first authoring gesture.
@@ -120,7 +146,22 @@ def run_workflow(driver, scene_path, artifacts):
     driver.replace_text(width - 250, 221, "UnsavedNativeEdit")
     assert scene_path.read_bytes() == before_unsaved, "Inspector unexpectedly auto-saved the project"
     driver.click(658, 21)
+    wait_for_document_modal("Cancel")
+    driver.click(width / 2 + 140, height / 2 + 7)  # Cancel preserves the unsaved edit.
+    saved = save_and_wait(lambda scene: entity(scene)["Name"] == "UnsavedNativeEdit")
+    before_discard = scene_path.read_bytes()
+    driver.replace_text(width - 250, 221, "DiscardedNativeEdit")
+    driver.click(658, 21)
+    wait_for_document_modal("Discard")
+    driver.click(width / 2 - 3, height / 2 + 7)  # Explicit Discard reloads persisted content.
+    assert scene_path.read_bytes() == before_discard, "Discard saved changes unexpectedly"
     save_and_wait(lambda scene: scene == saved)
+    driver.click(55, 151)
+    driver.replace_text(width - 250, 221, "SavedBeforeNativeLoad")
+    driver.click(658, 21)
+    wait_for_document_modal("Save")
+    driver.click(width / 2 - 153, height / 2 + 7)  # Save and continue persists before reloading.
+    save_and_wait(lambda scene: entity(scene)["Name"] == "SavedBeforeNativeLoad")
 
     driver.click(55, 114)
     created = save_and_wait(lambda scene: len(scene["Entities"]) == len(baseline["Entities"]) + 1)
@@ -158,8 +199,10 @@ def run_workflow(driver, scene_path, artifacts):
         "logical_width": width, "logical_height": height, "gallery_id": gallery_id, "created_id": created_id,
         "play_changed_viewport_samples": changed, "viewport_sample_count": len(authored_samples),
         "gizmo_path": path, "moved_transform": transform, "restored_transform": original_transform,
+        "document_modal_samples": modal_samples,
         "assertions": ["native Save readiness", "world-X drag", "single Undo", "text rename", "Undo/Redo", "save/reload",
-                       "entity creation", "play source preservation", "stop authored-state restoration"]
+                       "dirty Cancel", "explicit Discard", "Save and continue", "entity creation",
+                       "play source preservation", "stop authored-state restoration"]
     }
     driver.close()
     # The platform owner publishes this report only after both the driver and

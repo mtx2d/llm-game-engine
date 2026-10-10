@@ -44,6 +44,8 @@ endfunction()
 
 add_library(Aster STATIC
   Engine/src/Core/ExecutablePath.cpp
+  Engine/src/Core/JsonFile.cpp
+  Engine/src/Project/Project.cpp
   Engine/src/Input/InputState.cpp
   Engine/src/Renderer/Environment.cpp
   Engine/src/Assets/AssetImporter.cpp
@@ -112,7 +114,7 @@ endif()
 
 if(ASTER_BUILD_TESTS)
   enable_testing()
-  add_executable(AsterTests Tests/TestMain.cpp Tests/SceneTests.cpp Tests/SimulationTests.cpp Tests/CommandTests.cpp Tests/AssetTests.cpp Tests/EnvironmentTests.cpp Tests/ViewportTests.cpp)
+  add_executable(AsterTests Tests/TestMain.cpp Tests/SceneTests.cpp Tests/SimulationTests.cpp Tests/CommandTests.cpp Tests/AssetTests.cpp Tests/EnvironmentTests.cpp Tests/ViewportTests.cpp Tests/ProjectTests.cpp)
   target_link_libraries(AsterTests PRIVATE AsterEditorCommands)
   target_include_directories(AsterTests SYSTEM PRIVATE "${miniaudio_SOURCE_DIR}")
   target_compile_definitions(AsterTests PRIVATE ASTER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -123,7 +125,8 @@ if(ASTER_BUILD_TESTS)
   add_test(NAME Assets COMMAND AsterTests assets)
   add_test(NAME Environment COMMAND AsterTests environment)
   add_test(NAME Viewport COMMAND AsterTests viewport)
-  set_tests_properties(Scene Simulation Commands Assets Environment Viewport PROPERTIES TIMEOUT 90)
+  add_test(NAME Project COMMAND AsterTests project)
+  set_tests_properties(Scene Simulation Commands Assets Environment Viewport Project PROPERTIES TIMEOUT 90)
   add_test(NAME FeatureGallery COMMAND AsterRuntime
     --scene "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Scenes/FeatureGallery.aster"
     --project "${CMAKE_CURRENT_SOURCE_DIR}/Assets" --steps 120)
@@ -132,6 +135,11 @@ if(ASTER_BUILD_TESTS)
   add_test(NAME Protocol COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/ProtocolTests.py"
     "$<TARGET_FILE:AsterEditor>" "$<TARGET_FILE:AsterRuntime>")
   set_tests_properties(Protocol PROPERTIES TIMEOUT 90)
+  set(asterProjectWorkflowCommand "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/ProjectWorkflowTests.py"
+    --editor "$<TARGET_FILE:AsterEditor>" --runtime "$<TARGET_FILE:AsterRuntime>"
+    --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets" --notices "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty")
+  add_test(NAME ProjectWorkflow COMMAND ${asterProjectWorkflowCommand})
+  set_tests_properties(ProjectWorkflow PROPERTIES TIMEOUT 120)
   add_test(NAME Export COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/ExportTests.py"
     --editor "$<TARGET_FILE:AsterEditor>" --runtime "$<TARGET_FILE:AsterRuntime>"
     --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets" --notices "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty")
@@ -200,6 +208,8 @@ if(ASTER_BUILD_TESTS)
       --editor "$<TARGET_FILE:AsterEditor>" --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets"
       --artifacts "${CMAKE_CURRENT_BINARY_DIR}/editor-render-evidence")
     if(ASTER_BUILD_GUI AND (WIN32 OR APPLE))
+      add_test(NAME ProjectWindow COMMAND ${asterProjectWorkflowCommand} --graphical)
+      set_tests_properties(ProjectWindow PROPERTIES TIMEOUT 180 LABELS "gpu;gui;project")
       add_test(NAME EditorRender COMMAND ${asterEditorRenderCommand})
       set_tests_properties(EditorRender PROPERTIES TIMEOUT 300 LABELS "gpu;gui")
       if(WIN32)
@@ -216,6 +226,9 @@ if(ASTER_BUILD_TESTS)
       find_program(ASTER_XVFB_RUN xvfb-run)
       find_program(ASTER_XDOTOOL xdotool)
       if(ASTER_XVFB_RUN AND ASTER_XDOTOOL)
+        add_test(NAME ProjectWindow COMMAND "${ASTER_XVFB_RUN}" -a -s "-screen 0 1600x1000x24 -noreset"
+          ${asterProjectWorkflowCommand} --graphical)
+        set_tests_properties(ProjectWindow PROPERTIES TIMEOUT 180 LABELS "gpu;gui;project")
         # Keep Xvfb available between process/renderer lifetime checks.
         add_test(NAME EditorRender COMMAND "${ASTER_XVFB_RUN}" -a -s "-screen 0 1600x1000x24 -noreset"
           ${asterEditorRenderCommand})
