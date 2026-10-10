@@ -25,20 +25,26 @@ namespace Aster
 		[[nodiscard]] static Project Create(const std::filesystem::path& directory, std::string name);
 		[[nodiscard]] static ProjectConfig DeserializeConfig(const nlohmann::json& document);
 		[[nodiscard]] nlohmann::json Serialize() const;
+		// Validate a candidate without writing or changing this instance. The copy
+		// retains the exact loaded file baseline for a later UpdateConfig.
+		[[nodiscard]] Project PreviewConfig(ProjectConfig config) const;
 		// Validates configuration and the startup scene, then saves before changing
-		// this instance. A rejected update preserves both the file and configuration.
+		// this instance. Native writer ownership and exact loaded bytes protect against
+		// cooperating writers/external edits. Rejected updates preserve configuration.
 		void UpdateConfig(ProjectConfig config);
+		void VerifyUnchanged() const;
 		[[nodiscard]] const ProjectConfig& GetConfig() const noexcept;
 		[[nodiscard]] const std::filesystem::path& GetFilePath() const noexcept;
 		[[nodiscard]] const std::filesystem::path& GetAssetDirectory() const noexcept;
 		[[nodiscard]] std::filesystem::path ResolveAssetPath(const std::filesystem::path& relative) const;
 
 	  private:
-		Project(std::filesystem::path filePath, ProjectConfig config);
+		Project(std::filesystem::path filePath, ProjectConfig config, std::string contents = {});
 		std::filesystem::path ValidateConfig(const ProjectConfig& config) const;
 
 		std::filesystem::path m_FilePath;
 		std::filesystem::path m_AssetDirectory;
 		ProjectConfig m_Config;
+		std::string m_Contents;
 	};
 } // namespace Aster

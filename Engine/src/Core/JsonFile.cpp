@@ -93,7 +93,7 @@ namespace Aster
 	}
 
 	static void WriteTextFile(const std::filesystem::path& path, std::string_view text, bool conditional,
-							  std::optional<std::string_view> expectedContents)
+							  std::optional<std::string_view> expectedContents, size_t maximumReadBytes)
 	{
 		if (path.filename().empty() || path.filename() == "." || path.filename() == ".." ||
 			std::filesystem::is_symlink(path))
@@ -202,8 +202,7 @@ namespace Aster
 				throw std::system_error(errno, std::generic_category(), "Close output file");
 			}
 #endif
-			if (conditional && expectedContents &&
-				ReadTextFile(destination, 64ULL * 1024ULL * 1024ULL) != *expectedContents)
+			if (conditional && expectedContents && ReadTextFile(destination, maximumReadBytes) != *expectedContents)
 			{
 				throw std::runtime_error(
 					"Save conflict: file changed outside this editor; reload or save to a new path");
@@ -251,12 +250,17 @@ namespace Aster
 
 	void WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text)
 	{
-		WriteTextFile(path, text, false, std::nullopt);
+		WriteTextFile(path, text, false, std::nullopt, 64ULL * 1024ULL * 1024ULL);
 	}
 
 	void WriteTextFileConditionally(const std::filesystem::path& path, std::string_view text,
-									std::optional<std::string_view> expectedContents)
+									std::optional<std::string_view> expectedContents, size_t maximumBytes)
 	{
-		WriteTextFile(path, text, true, expectedContents);
+		if (maximumBytes == 0 || maximumBytes > 64ULL * 1024ULL * 1024ULL || text.size() > maximumBytes ||
+			(expectedContents && expectedContents->size() > maximumBytes))
+		{
+			throw std::invalid_argument("Conditional output exceeds its size limit or uses an invalid limit");
+		}
+		WriteTextFile(path, text, true, expectedContents, maximumBytes);
 	}
 } // namespace Aster

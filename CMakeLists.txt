@@ -43,10 +43,12 @@ function(aster_target target)
 endfunction()
 
 add_library(Aster STATIC
+  Engine/src/Core/DirectoryPublication.cpp
   Engine/src/Core/ExecutablePath.cpp
   Engine/src/Core/FileLock.cpp
   Engine/src/Core/Hash.cpp
   Engine/src/Core/JsonFile.cpp
+  Engine/src/Core/PrivateDirectory.cpp
   Engine/src/Project/Project.cpp
   Engine/src/Input/InputState.cpp
   Engine/src/Renderer/Environment.cpp

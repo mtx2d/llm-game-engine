@@ -28,5 +28,6 @@ namespace Aster
 	// This detects observed changes; it is not atomic compare-and-swap against
 	// arbitrary concurrent writers.
 	void WriteTextFileConditionally(const std::filesystem::path& path, std::string_view text,
-									std::optional<std::string_view> expectedContents);
+									std::optional<std::string_view> expectedContents,
+									size_t maximumBytes = 64ULL * 1024ULL * 1024ULL);
 } // namespace Aster

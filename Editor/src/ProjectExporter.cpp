@@ -1,5 +1,6 @@
 #include <Aster/Assets/AssetImporter.h>
 #include <Aster/Assets/AssetPath.h>
+#include <Aster/Core/DirectoryPublication.h>
 #include <Aster/Editor/ProjectExporter.h>
 #include <Aster/Scene/Scene.h>
 
@@ -571,9 +572,9 @@ namespace Aster
 					"Output directory changed during export");
 			if (std::filesystem::exists(output))
 			{
-				removedEmptyDestination = std::filesystem::remove(output);
+				removedEmptyDestination = RemoveEmptyDirectoryForPublication(output);
 			}
-			std::filesystem::rename(staging, output);
+			PublishDirectoryExclusively(staging, output);
 			return output;
 		}
 		catch (...)

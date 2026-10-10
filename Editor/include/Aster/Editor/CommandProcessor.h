@@ -56,6 +56,7 @@ namespace Aster
 		void RequireEditing() const;
 		void RequireDocumentChange(const nlohmann::json& request) const;
 		void OpenProject(Project project);
+		nlohmann::json ConfigureProject(const nlohmann::json& request);
 		void RecordChange(const nlohmann::json& before);
 		void CheckpointRecovery();
 		nlohmann::json RestoreRecovery(const nlohmann::json& request);

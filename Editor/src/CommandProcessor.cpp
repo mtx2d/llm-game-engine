@@ -208,6 +208,62 @@ namespace Aster
 		}
 	}
 
+	nlohmann::json CommandProcessor::ConfigureProject(const nlohmann::json& request)
+	{
+		RequireEditing();
+		if (m_EditTransaction || !m_Project)
+		{
+			throw std::logic_error("Finish editing and open a project file before configuring it");
+		}
+		if (request.contains("discardChanges") && !request.at("discardChanges").is_boolean())
+		{
+			throw std::invalid_argument("discardChanges must be a boolean");
+		}
+		auto config = Project::DeserializeConfig(request.at("config"));
+		auto project = m_Project->PreviewConfig(config);
+		if (project.GetAssetDirectory() == m_ProjectRoot)
+		{
+			project.UpdateConfig(std::move(config));
+			m_Project = std::move(project);
+			return {{"configured", true}, {"documentChanged", false}, {"warning", nullptr}};
+		}
+		RequireDocumentChange(request);
+		SceneDocumentFile file;
+		auto scene = file.Load(project.ResolveAssetPath(project.GetConfig().StartScene));
+		auto saved = scene.Serialize();
+		auto scenePath = project.GetConfig().StartScene.generic_string();
+		auto assetRoot = project.GetAssetDirectory();
+		auto recovery = m_Recovery ? std::make_unique<RecoveryStore>(assetRoot) : nullptr;
+		nlohmann::json result = {{"configured", true}, {"documentChanged", true}, {"warning", nullptr}};
+		project.UpdateConfig(std::move(config));
+		// Configuration persistence is the commit point. All document preparation
+		// precedes it; publication below only transfers already owned state.
+		auto previousRecovery = std::move(m_Recovery);
+		m_Project = std::move(project);
+		m_ProjectRoot = std::move(assetRoot);
+		m_Scene = std::move(scene);
+		m_DocumentFile = std::move(file);
+		m_ScenePath = std::move(scenePath);
+		m_SavedScene = std::move(saved);
+		m_Undo.clear();
+		m_Redo.clear();
+		m_Recovery = std::move(recovery);
+		m_RecoveryPending = m_Recovery != nullptr;
+		if (previousRecovery)
+		{
+			try
+			{
+				previousRecovery->Clear();
+			}
+			catch (const std::exception& error)
+			{
+				result["warning"] =
+					"Configuration saved; previous recovery data could not be removed: " + std::string(error.what());
+			}
+		}
+		return result;
+	}
+
 	void CommandProcessor::SetInput(const InputSnapshot& input)
 	{
 		if (m_Simulation)
@@ -312,13 +368,14 @@ namespace Aster
 		const std::string command = request.at("command").get<std::string>();
 		if (command == "help")
 		{
-			return {
-				"scene.get",		 "scene.new",		"scene.replace",	   "scene.load",	   "scene.save",
-				"entity.create",	 "entity.destroy",	"entity.parent",	   "entity.patch",	   "prefab.spawn",
-				"history.undo",		 "history.redo",	"history.begin",	   "history.commit",   "history.cancel",
-				"simulation.start",	 "simulation.step", "simulation.stop",	   "input.set",		   "project.export",
-				"scene.environment", "scene.status",	"project.get",		   "project.open",	   "project.create",
-				"session.close",	 "recovery.list",	"recovery.checkpoint", "recovery.restore", "recovery.discard"};
+			return {"scene.get",		 "scene.new",		 "scene.replace",	 "scene.load",
+					"scene.save",		 "entity.create",	 "entity.destroy",	 "entity.parent",
+					"entity.patch",		 "prefab.spawn",	 "history.undo",	 "history.redo",
+					"history.begin",	 "history.commit",	 "history.cancel",	 "simulation.start",
+					"simulation.step",	 "simulation.stop",	 "input.set",		 "project.export",
+					"scene.environment", "scene.status",	 "project.get",		 "project.open",
+					"project.create",	 "session.close",	 "recovery.list",	 "recovery.checkpoint",
+					"recovery.restore",	 "recovery.discard", "project.configure"};
 		}
 		if (command == "recovery.list")
 		{
@@ -372,6 +429,10 @@ namespace Aster
 												  : Project::Create(path, request.at("name").get<std::string>()));
 			return {{"path", m_Project->GetFilePath().generic_string()}, {"assets", m_ProjectRoot.generic_string()}};
 		}
+		if (command == "project.configure")
+		{
+			return ConfigureProject(request);
+		}
 		if (command == "project.export")
 		{
 			RequireEditing();
@@ -381,6 +442,10 @@ namespace Aster
 			}
 			ExportSettings settings;
 			m_DocumentFile.VerifyUnchanged();
+			if (m_Project)
+			{
+				m_Project->VerifyUnchanged();
+			}
 			settings.AssetRoot = m_ProjectRoot;
 			settings.ScenePath = request.at("scene").get<std::string>();
 			settings.RuntimeExecutable = request.at("runtime").get<std::string>();

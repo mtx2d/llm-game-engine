@@ -23,6 +23,7 @@ Closing standard input stops any active play session and runs its `OnDestroy` ca
 | `project.get` | none | Return active project path/configuration and resolved asset root; configuration/path are null in legacy directory mode |
 | `project.open` | `path`, optional `discardChanges` | Open a validated project file and startup scene; preserve active project on failure |
 | `project.create` | `path`, `name`, optional `discardChanges` | Create a complete project in an absent directory and open it |
+| `project.configure` | complete versioned `config`, optional boolean `discardChanges` | Persist configuration with exact-byte conflict protection; name/startup updates preserve the document/history, asset-root changes load the new startup scene and protect dirty work; return `configured`, `documentChanged`, nullable `warning` |
 | `scene.status` | none | Return path, dirty flag, editing and playing state |
 | `scene.get` | none | Return current serialized scene, including simulation state during play |
 | `scene.new` | optional `name`, `discardChanges` | Replace authoring scene with an empty unsaved document; reject dirty state without explicit discard |

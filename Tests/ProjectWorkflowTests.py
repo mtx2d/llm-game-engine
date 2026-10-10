@@ -12,6 +12,7 @@ import threading
 from ExportTests import package_executable, package_resources, macos_shipping_environment
 from EditorRenderTests import read_image, region
 from CreateBlockStack import author
+from RecoveryTests import Editor as AutomationEditor
 
 
 def main():
@@ -104,6 +105,48 @@ def main():
                 live.stdout.close()
                 if not live.stdin.closed:
                     live.stdin.close()
+
+        config_root = root / "Configuration workflow"
+        config_project = Path(json.loads(run(
+            [editor, "--create-project", config_root, "Configuration owners"]).stdout)["project"])
+        with AutomationEditor(editor, config_project) as first, AutomationEditor(editor, config_project) as second:
+            first_config = first.get("project.get")["config"]
+            second.get("entity.create", name="Pending during configuration conflict")
+            pending = second.get("scene.get")
+            first_config["Name"] = "First published configuration"
+            assert first.get("project.configure", config=first_config)["documentChanged"] is False
+            external_bytes = config_project.read_bytes()
+            first_config["Name"] = "Stale second configuration"
+            rejected = second.request("project.configure", config=first_config)
+            assert not rejected["ok"] and "conflict" in rejected["error"], rejected
+            assert config_project.read_bytes() == external_bytes
+            assert second.get("scene.get") == pending and second.get("scene.status")["dirty"]
+            assert not second.request("project.export")["ok"], "Dirty/conflicting export bypassed validation"
+            second.get("scene.save", path="Scenes/PreservedPending.aster")
+            rejected_export = second.request("project.export")
+            assert not rejected_export["ok"] and "Project save conflict" in rejected_export["error"], rejected_export
+            second.get("project.open", path=str(config_project))
+            assert second.get("project.get")["config"]["Name"] == "First published configuration"
+            assert not second.request("history.undo")["ok"]
+            second.get("project.configure", config=first_config)
+            assert json.loads(config_project.read_text())["Name"] == "Stale second configuration"
+            assert json.loads((config_root / "Assets/Scenes/PreservedPending.aster").read_text()) == pending
+        new_assets = config_root / "AlternateAssets"
+        shutil.copytree(config_root / "Assets", new_assets)
+        alternate = new_assets / "Scenes/Main.aster"
+        alternate_scene = json.loads(alternate.read_text())
+        alternate_scene["Name"] = "Alternate configured startup"
+        alternate.write_text(json.dumps(alternate_scene))
+        with AutomationEditor(editor, config_project) as changing:
+            config = changing.get("project.get")["config"]
+            config["AssetDirectory"] = "AlternateAssets"
+            result = changing.get("project.configure", config=config)
+            assert result["documentChanged"] is True and result["warning"] is None
+            assert changing.get("scene.get") == alternate_scene and not changing.get("scene.status")["dirty"]
+            assert Path(changing.get("project.get")["assets"]) == new_assets
+        configured_output = root / "ConfiguredRuntime.aster"
+        run([runtime, "--project", config_project, "--steps", 0, "--output", configured_output])
+        assert json.loads(configured_output.read_text()) == alternate_scene
 
         (source / "Assets/Scripts").mkdir()
         (source / "Assets/Scripts/Actor.lua").write_text(

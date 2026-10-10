@@ -1,5 +1,7 @@
+#include <Aster/Core/DirectoryPublication.h>
 #include <Aster/Core/FileLock.h>
 #include <Aster/Core/JsonFile.h>
+#include <Aster/Core/PrivateDirectory.h>
 #include <Aster/Editor/CommandProcessor.h>
 #include <Aster/Editor/EditorStorage.h>
 #include <Aster/Project/Project.h>
@@ -54,6 +56,68 @@ namespace
 		std::filesystem::path Path;
 	};
 
+	void TestDirectoryPublication(const std::filesystem::path& root)
+	{
+		const auto staged = root / "Staged directory";
+		const auto destination = root / "Published directory";
+		std::filesystem::create_directory(staged);
+		Aster::WriteTextFileAtomically(staged / "Keep.json", "{\"complete\":true}");
+		std::filesystem::create_directory(destination);
+		Check(!Aster::RemoveEmptyDirectoryForPublication(root / "Absent publication"),
+			  "Absent directory needs no removal");
+		const auto identity = std::filesystem::canonical(destination);
+		Rejects([&] { Aster::PublishDirectoryExclusively(staged, destination); },
+				"Exclusive publication preserves even an empty competing destination");
+		Check(std::filesystem::is_empty(destination) && std::filesystem::canonical(destination) == identity &&
+				  Aster::ReadJsonFile(staged / "Keep.json", 1024).at("complete"),
+			  "Rejected publication preserves both source and destination");
+		Aster::WriteTextFileAtomically(destination / "Foreign.txt", "User-owned destination");
+		Rejects([&] { (void)Aster::RemoveEmptyDirectoryForPublication(destination); },
+				"Publication cleanup refuses nonempty directories");
+		Rejects([&] { Aster::PublishDirectoryExclusively(staged, destination); },
+				"Nonempty destination cannot be replaced");
+		Check(Aster::ReadTextFile(destination / "Foreign.txt", 1024) == "User-owned destination",
+			  "Foreign destination content remains intact");
+		std::filesystem::remove_all(destination);
+		Aster::WriteTextFileAtomically(destination, "User-owned file");
+		Rejects([&] { (void)Aster::RemoveEmptyDirectoryForPublication(destination); },
+				"Publication cleanup never unlinks a competing file");
+		Rejects([&] { Aster::PublishDirectoryExclusively(staged, destination); },
+				"File destination cannot be replaced");
+		Check(Aster::ReadTextFile(destination, 1024) == "User-owned file", "File destination remains intact");
+		std::filesystem::remove(destination);
+		std::error_code error;
+		std::filesystem::create_directory_symlink(staged, destination, error);
+#ifndef _WIN32
+		Check(!error, "Unix destination symlink test must execute");
+#endif
+		if (!error)
+		{
+			Rejects([&] { (void)Aster::RemoveEmptyDirectoryForPublication(destination); },
+					"Publication cleanup rejects linked directories");
+			Rejects([&] { Aster::PublishDirectoryExclusively(staged, destination); },
+					"Linked destination cannot be replaced");
+			Check(std::filesystem::is_symlink(destination), "Destination link remains intact");
+			Rejects([&] { Aster::PublishDirectoryExclusively(destination, root / "Alias publication"); },
+					"Linked source cannot be published");
+			std::filesystem::remove(destination);
+		}
+		Rejects([&] { Aster::PublishDirectoryExclusively(staged, staged); }, "Self publication rejected");
+		const auto caseAlias = root / "staged directory";
+		if (std::filesystem::exists(caseAlias))
+		{
+			Rejects([&] { Aster::PublishDirectoryExclusively(staged, caseAlias); },
+					"Existing case-only source alias cannot bypass exclusive publication");
+			Check(std::filesystem::exists(staged), "Case alias rejection retains the source");
+		}
+		Aster::PublishDirectoryExclusively(staged, destination);
+		Check(!std::filesystem::exists(staged) && Aster::ReadJsonFile(destination / "Keep.json", 1024).at("complete"),
+			  "Absent destination receives the complete directory");
+		std::filesystem::remove(destination / "Keep.json");
+		Check(Aster::RemoveEmptyDirectoryForPublication(destination) && !std::filesystem::exists(destination),
+			  "Publication preparation removes an explicitly empty directory");
+	}
+
 	void TestJsonFiles(const std::filesystem::path& root)
 	{
 		const auto path = root / "File.json";
@@ -62,6 +126,10 @@ namespace
 		Aster::WriteTextFileAtomically(path, R"({"name":"second","value":2})");
 		Check(Aster::ReadJsonFile(path, 1024).at("value") == 2, "Atomic file replaces existing contents");
 		const auto expected = Aster::ReadTextFile(path, 1024);
+		Rejects([&] { Aster::WriteTextFileConditionally(path, "new", expected, 0); },
+				"Conditional publication rejects an invalid read/write limit");
+		Rejects([&] { Aster::WriteTextFileConditionally(path, "new", expected, 2); },
+				"Conditional publication rejects content larger than its chosen format limit");
 		Rejects([&] { Aster::WriteTextFileConditionally(path, "new", std::nullopt); },
 				"Exclusive publication cannot replace an existing file");
 		Rejects([&] { Aster::WriteTextFileConditionally(path, "new", "different"); },
@@ -205,6 +273,7 @@ namespace
 		Aster::WriteTextFileAtomically(path, R"({"Version":1,"Version":1})");
 		Rejects([&] { (void)Aster::Project::Load(path); }, "Duplicate project fields rejected");
 		Aster::WriteTextFileAtomically(path, document.dump());
+		project = Aster::Project::Load(path);
 		auto config = project.GetConfig();
 		config.StartScene = "Scenes/Missing.aster";
 		Rejects([&] { project.UpdateConfig(config); }, "Missing startup scene rejected");
@@ -259,6 +328,172 @@ namespace
 			Check(!entry.path().filename().string().starts_with(".aster-project-"),
 				  "Failed creation removes staging directory");
 		}
+	}
+
+	void TestConfigurationConflicts(const std::filesystem::path& root)
+	{
+		auto first = Aster::Project::Create(root / "Configuration conflicts", "Owner A");
+		const auto path = first.GetFilePath();
+		auto second = Aster::Project::Load(path);
+		const auto baseline = second.Serialize();
+		auto config = first.GetConfig();
+		config.Name = "Owner B";
+		const auto preview = first.PreviewConfig(config);
+		Check(preview.GetConfig().Name == "Owner B" && first.GetConfig().Name == "Owner A" &&
+				  Aster::Project::Load(path).GetConfig().Name == "Owner A",
+			  "Configuration preview validates without publishing or mutating its source");
+		first.UpdateConfig(config);
+		const auto published = Aster::ReadTextFile(path, 64 * 1024);
+		config.Name = "Owner C";
+		Rejects([&] { second.UpdateConfig(config); }, "Stale project owner cannot overwrite another configuration");
+		Check(second.Serialize() == baseline && Aster::ReadTextFile(path, 64 * 1024) == published,
+			  "Configuration conflict preserves memory and published bytes");
+		Rejects([&] { second.VerifyUnchanged(); }, "Explicit verification detects a stale project");
+		second = Aster::Project::Load(path);
+		second.UpdateConfig(config);
+		const auto original = Aster::ReadTextFile(path, 64 * 1024);
+		const auto timestamp = std::filesystem::last_write_time(path);
+		auto external = second.Serialize();
+		external["Name"] = "Owner D";
+		Aster::WriteTextFileAtomically(path, external.dump(2));
+		std::filesystem::last_write_time(path, timestamp);
+		Check(std::filesystem::file_size(path) == original.size(), "Configuration conflict fixture preserves size");
+		Rejects([&] { second.UpdateConfig(config); }, "Same-size/time external configuration change rejected");
+		Check(second.GetConfig().Name == "Owner C" && Aster::ReadJsonFile(path, 64 * 1024) == external,
+			  "Same-size/time rejection preserves both authors");
+		Aster::WriteTextFileAtomically(path, original + "\n");
+		Rejects([&] { second.UpdateConfig(config); }, "Whitespace-only configuration change rejected");
+		std::filesystem::remove(path);
+		Rejects([&] { second.UpdateConfig(config); }, "Deleted configuration is not recreated by Save");
+		Check(!std::filesystem::exists(path), "Rejected Save preserves deletion");
+		Aster::WriteTextFileAtomically(path, std::string(65537, ' '));
+		Rejects([&] { second.UpdateConfig(config); }, "Conditional configuration read retains 64 KiB bound");
+		Check(std::filesystem::file_size(path) == 65537, "Oversized external file is preserved");
+		Aster::WriteTextFileAtomically(path, original);
+		const auto storage = Aster::PreparePrivateDirectory(path.parent_path() / ".aster");
+		auto lock = Aster::FileLock::TryAcquire(storage / "ProjectWrites.lock");
+		config.Name = "Retry owner";
+		Rejects([&] { second.UpdateConfig(config); }, "Busy configuration writer rejects without publication");
+		Check(second.GetConfig().Name == "Owner C" && Aster::ReadTextFile(path, 64 * 1024) == original,
+			  "Busy configuration Save preserves state and exact baseline");
+		lock.reset();
+		second.UpdateConfig(config);
+		Check(Aster::Project::Load(path).GetConfig().Name == "Retry owner", "Retry uses preserved loaded baseline");
+		second.VerifyUnchanged();
+		const auto beforeAlias = Aster::ReadTextFile(path, 64 * 1024);
+		const auto resourcesA = path.parent_path() / "ResourcesA";
+		const auto resourcesB = path.parent_path() / "ResourcesB";
+		for (const auto& resources : {resourcesA, resourcesB})
+		{
+			std::filesystem::create_directories(resources / "Scenes");
+			Aster::Scene("Alias startup").Save(resources / "Scenes/Main.aster");
+		}
+		const auto alias = path.parent_path() / "AliasAssets";
+		std::error_code aliasError;
+		std::filesystem::create_directory_symlink(resourcesA, alias, aliasError);
+#ifndef _WIN32
+		Check(!aliasError, "Unix configuration alias test must execute");
+#endif
+		if (!aliasError)
+		{
+			config.AssetDirectory = "AliasAssets";
+			auto candidate = second.PreviewConfig(config);
+			std::filesystem::remove(alias);
+			std::filesystem::create_directory_symlink(resourcesB, alias);
+			Rejects([&] { candidate.UpdateConfig(config); }, "Prepared configuration rejects a retargeted asset root");
+			Check(Aster::ReadTextFile(path, 64 * 1024) == beforeAlias && candidate.GetAssetDirectory() == resourcesA,
+				  "Root retarget rejection preserves publication and prepared ownership");
+		}
+		for (const auto& entry : std::filesystem::directory_iterator(path.parent_path()))
+		{
+			Check(entry.path().filename().string().find(".aster-tmp-") == std::string::npos,
+				  "Rejected configuration saves remove owned temporary files");
+		}
+
+		auto blocked = Aster::Project::Create(root / "Blocked configuration", "Blocked");
+		const auto blockedBytes = Aster::ReadTextFile(blocked.GetFilePath(), 64 * 1024);
+		Aster::WriteTextFileAtomically(blocked.GetFilePath().parent_path() / ".aster", "Existing user file");
+		Rejects([&] { blocked.UpdateConfig(blocked.GetConfig()); }, "Invalid private configuration storage rejected");
+		Check(Aster::ReadTextFile(blocked.GetFilePath(), 64 * 1024) == blockedBytes &&
+				  Aster::ReadTextFile(blocked.GetFilePath().parent_path() / ".aster", 1024) == "Existing user file",
+			  "Storage failure preserves configuration and user-owned file");
+	}
+
+	void TestConfigureCommand(const std::filesystem::path& root)
+	{
+		const auto project = Aster::Project::Create(root / "Configure command", "Configure");
+		const auto source = project.GetFilePath();
+		const auto mainScene = project.ResolveAssetPath("Scenes/Main.aster");
+		Aster::Scene("Alternate").Save(project.ResolveAssetPath("Scenes/Alternate.aster"));
+		std::filesystem::create_directories(source.parent_path() / "NewAssets/Scenes");
+		Aster::Scene("New root startup").Save(source.parent_path() / "NewAssets/Scenes/Main.aster");
+		Aster::CommandProcessor editor(source);
+		editor.EnableRecovery();
+		Check(editor.Execute({{"command", "entity.create"}, {"name", "Pending authoring"}}).at("ok"),
+			  "Prepare dirty document before configuration");
+		const auto authored = editor.GetScene().Serialize();
+		const auto handle = editor.GetScene().Entities().back();
+		auto config = project.Serialize();
+		config["Name"] = "Renamed project";
+		config["StartScene"] = "Scenes/Alternate.aster";
+		const auto configure = [&](bool discard = false)
+		{ return editor.Execute({{"command", "project.configure"}, {"config", config}, {"discardChanges", discard}}); };
+		const auto renamed = configure();
+		Check(renamed.at("ok") && !renamed.at("result").at("documentChanged").get<bool>() &&
+				  editor.GetScene().Serialize() == authored && editor.GetScene().IsAlive(handle) &&
+				  editor.GetScenePath() == "Scenes/Main.aster" && editor.HasUnsavedChanges(),
+			  "Name/startup configuration preserves current authored document and dirty baseline");
+		Check(Aster::Project::Load(source).GetConfig().StartScene == "Scenes/Alternate.aster",
+			  "Startup configuration is persisted for future launches");
+		Check(!editor.UpdateRecovery(true), "Current authored work checkpoints after configuration");
+		const auto recoveryID =
+			editor.Execute({{"command", "recovery.list"}}).at("result")[0].at("id").get<std::string>();
+		config["AssetDirectory"] = "NewAssets";
+		config["StartScene"] = "Scenes/Main.aster";
+		const auto beforeSwitch = Aster::ReadTextFile(source, 64 * 1024);
+		Check(!configure().at("ok").get<bool>() && editor.GetScene().Serialize() == authored &&
+				  Aster::ReadTextFile(source, 64 * 1024) == beforeSwitch,
+			  "Dirty asset-root switch rejects before configuration publication");
+		Aster::WriteTextFileAtomically(source, beforeSwitch + "\n");
+		Check(!configure(true).at("ok").get<bool>() && editor.GetScene().Serialize() == authored &&
+				  editor.GetScene().IsAlive(handle) && editor.GetAssetRoot() == project.GetAssetDirectory(),
+			  "Failed configuration persistence preserves active document, handles and root");
+		Check(editor.Execute({{"command", "history.undo"}}).at("ok") &&
+				  editor.Execute({{"command", "history.redo"}}).at("ok") && editor.GetScene().Serialize() == authored,
+			  "Configuration conflict preserves Undo/Redo");
+		Aster::WriteTextFileAtomically(source, beforeSwitch);
+		const auto oldSession = project.GetAssetDirectory() / ".aster/Recovery" / recoveryID;
+		Aster::WriteTextFileAtomically(oldSession / "Foreign.txt", "Preserved user data");
+		const auto switched = configure(true);
+		Check(switched.at("ok") && switched.at("result").at("documentChanged").get<bool>() &&
+				  switched.at("result").at("warning").is_string() &&
+				  editor.GetScene().GetName() == "New root startup" &&
+				  editor.GetAssetRoot() == std::filesystem::canonical(source.parent_path() / "NewAssets") &&
+				  !editor.GetScene().IsAlive(handle) && !editor.HasUnsavedChanges(),
+			  "Asset-root switch publishes the prepared document and reports old recovery cleanup failure");
+		Check(Aster::Project::Load(source).GetAssetDirectory() == editor.GetAssetRoot() &&
+				  !editor.Execute({{"command", "history.undo"}}).at("ok").get<bool>(),
+			  "Published configuration matches the active root and isolates document history");
+		Check(Aster::ReadTextFile(oldSession / "Foreign.txt", 1024) == "Preserved user data" &&
+				  std::filesystem::exists(oldSession / "Manifest.json") && Aster::Scene::Load(mainScene).Size() == 1,
+			  "Cleanup warning retains old checkpoint, foreign data and unsaved source file");
+		Aster::RecoveryStore oldRecovery(project.GetAssetDirectory());
+		Check(!oldRecovery.List()[0].at("active").get<bool>(), "Old recovery ownership releases after root switch");
+		std::filesystem::remove(oldSession / "Foreign.txt");
+		oldRecovery.Discard(recoveryID);
+		Check(!editor.Execute({{"command", "project.configure"}, {"config", config}, {"discardChanges", "true"}})
+				   .at("ok")
+				   .get<bool>(),
+			  "Invalid discard types rejected even for same-root updates");
+		Check(editor.Execute({{"command", "history.begin"}}).at("ok") && !configure().at("ok").get<bool>() &&
+				  editor.Execute({{"command", "history.cancel"}}).at("ok"),
+			  "Configuration rejects unfinished edit groups");
+		Check(editor.Execute({{"command", "simulation.start"}, {"audio", "offline"}}).at("ok") &&
+				  !configure().at("ok").get<bool>() && editor.Execute({{"command", "simulation.stop"}}).at("ok"),
+			  "Configuration rejects changes during play");
+		Aster::CommandProcessor legacy(editor.GetAssetRoot());
+		Check(!legacy.Execute({{"command", "project.configure"}, {"config", config}}).at("ok").get<bool>(),
+			  "Configuration requires an owned project file");
 	}
 
 	void TestSaveConflicts(const std::filesystem::path& root)
@@ -500,9 +735,12 @@ namespace
 void RunProjectTests()
 {
 	TemporaryDirectory directory;
+	TestDirectoryPublication(directory.Path);
 	TestJsonFiles(directory.Path);
 	TestSaveOwnership(directory.Path);
 	TestProjects(directory.Path);
+	TestConfigurationConflicts(directory.Path);
+	TestConfigureCommand(directory.Path);
 	TestDocumentLifecycle(directory.Path);
 	TestSaveConflicts(directory.Path);
 	TestSessionClose(directory.Path);

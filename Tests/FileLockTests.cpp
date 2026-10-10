@@ -2,6 +2,7 @@
 #include <Aster/Core/JsonFile.h>
 #include <Aster/Editor/EditorStorage.h>
 #include <Aster/Editor/SceneDocumentFile.h>
+#include <Aster/Project/Project.h>
 
 #include <iostream>
 #include <stdexcept>
@@ -148,6 +149,25 @@ int main(int argc, char** argv)
 			try
 			{
 				document.Save(scene, path);
+				std::cout << "saved\n";
+			}
+			catch (const std::runtime_error& error)
+			{
+				std::cout << "rejected: " << error.what() << '\n';
+			}
+		}
+		else if (mode == "configure")
+		{
+			Check(argc == 4, "Expected project path and authored configuration name");
+			auto project = Aster::Project::Load(path);
+			auto config = project.GetConfig();
+			config.Name = argv[3];
+			std::cout << "ready" << std::endl;
+			std::string request;
+			Check(static_cast<bool>(std::getline(std::cin, request)) && request == "save", "Expected save");
+			try
+			{
+				project.UpdateConfig(std::move(config));
 				std::cout << "saved\n";
 			}
 			catch (const std::runtime_error& error)

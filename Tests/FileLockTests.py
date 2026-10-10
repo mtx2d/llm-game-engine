@@ -75,33 +75,35 @@ def main():
         scene = project / "Assets/Scenes/Main.aster"
         # Both real editor document owners observe exactly the same baseline
         # before either can publish. Each trial permits only one winner.
-        for trial in range(12):
-            workers = []
-            try:
-                for name in ("First", "Second"):
-                    worker = subprocess.Popen([str(executable), "save", str(scene), f"{name}-{trial}"],
-                                              stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                              stderr=subprocess.PIPE, text=True)
-                    workers.append(worker)
-                    ready(worker, "ready")
-                for worker in workers:
-                    worker.stdin.write("save\n")
-                    worker.stdin.flush()
-                results = [finish(worker) for worker in workers]
-                assert results.count("saved") == 1, f"Concurrent saves lost update protection: {results}"
-                rejected = next(result for result in results if result != "saved")
-                assert "Save conflict" in rejected or "being saved by another editor" in rejected, results
-                winner = "First" if results[0] == "saved" else "Second"
-                assert json.loads(scene.read_text())["Name"] == f"{winner}-{trial}"
-            finally:
-                for worker in workers:
-                    if worker.poll() is None:
-                        worker.kill()
-                        worker.wait(timeout=5)
-                    for stream in (worker.stdin, worker.stdout, worker.stderr):
-                        stream.close()
+        for mode, target in (("save", scene), ("configure", project / "Project.asterproj")):
+            for trial in range(12):
+                workers = []
+                try:
+                    for name in ("First", "Second"):
+                        worker = subprocess.Popen([str(executable), mode, str(target), f"{name}-{trial}"],
+                                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                                  stderr=subprocess.PIPE, text=True)
+                        workers.append(worker)
+                        ready(worker, "ready")
+                    for worker in workers:
+                        worker.stdin.write("save\n")
+                        worker.stdin.flush()
+                    results = [finish(worker) for worker in workers]
+                    assert results.count("saved") == 1, f"Concurrent saves lost update protection: {results}"
+                    rejected = next(result for result in results if result != "saved")
+                    assert "Save conflict" in rejected or "being saved by another editor" in rejected, results
+                    winner = "First" if results[0] == "saved" else "Second"
+                    assert json.loads(target.read_text())["Name"] == f"{winner}-{trial}"
+                finally:
+                    for worker in workers:
+                        if worker.poll() is None:
+                            worker.kill()
+                            worker.wait(timeout=5)
+                        for stream in (worker.stdin, worker.stdout, worker.stderr):
+                            stream.close()
         assert (scene.parent / ".aster/Writes.lock").is_file(), "Stable save lock was removed"
-    print("Native same-process/multiprocess ownership, crash release and concurrent scene saves passed")
+        assert (project / ".aster/ProjectWrites.lock").is_file(), "Stable configuration lock was removed"
+    print("Native ownership, crash release and competing scene/configuration saves passed")
 
 
 if __name__ == "__main__":
