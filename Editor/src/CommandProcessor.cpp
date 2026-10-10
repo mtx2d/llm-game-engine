@@ -1,3 +1,4 @@
+#include <Aster/Core/Hash.h>
 #include <Aster/Editor/CommandProcessor.h>
 #include <Aster/Editor/ProjectExporter.h>
 
@@ -51,6 +52,115 @@ namespace Aster
 		return (IsPlaying() ? m_PlaySnapshot : m_Scene.Serialize()) != m_SavedScene;
 	}
 
+	void CommandProcessor::EnableRecovery()
+	{
+		if (!m_Recovery)
+		{
+			m_Recovery = std::make_unique<RecoveryStore>(m_ProjectRoot);
+			m_RecoveryPending = true;
+		}
+	}
+
+	void CommandProcessor::CheckpointRecovery()
+	{
+		EnableRecovery();
+		if (m_EditTransaction)
+		{
+			throw std::logic_error("Finish the current edit before checkpointing recovery");
+		}
+		if (!HasUnsavedChanges())
+		{
+			m_Recovery->Clear();
+		}
+		else
+		{
+			RecoveryDocument document;
+			document.Scene = IsPlaying() ? m_PlaySnapshot : m_Scene.Serialize();
+			document.Path = m_ScenePath;
+			if (document.Path)
+			{
+				std::replace(document.Path->begin(), document.Path->end(), '\\', '/');
+				document.SourceDigest = ComputeSha256(m_DocumentFile.GetContents());
+			}
+			document.SavedDigest = ComputeSha256(m_SavedScene.dump());
+			m_Recovery->Checkpoint(document);
+		}
+		m_RecoveryPending = false;
+	}
+
+	std::optional<std::string> CommandProcessor::UpdateRecovery(bool force)
+	{
+		if (!m_Recovery || !m_RecoveryPending || m_IsClosed || m_EditTransaction)
+		{
+			return std::nullopt;
+		}
+		const auto now = std::chrono::steady_clock::now();
+		if (!force && now < m_NextRecoveryCheckpoint)
+		{
+			return std::nullopt;
+		}
+		m_NextRecoveryCheckpoint = now + std::chrono::seconds(5);
+		try
+		{
+			CheckpointRecovery();
+		}
+		catch (const std::exception& error)
+		{
+			return "Recovery checkpoint failed: " + std::string(error.what());
+		}
+		return std::nullopt;
+	}
+
+	nlohmann::json CommandProcessor::RestoreRecovery(const nlohmann::json& request)
+	{
+		RequireDocumentChange(request);
+		EnableRecovery();
+		auto document = m_Recovery->Load(request.at("session").get<std::string>());
+		auto scene = Scene::Deserialize(document.Scene);
+		SceneDocumentFile file;
+		nlohmann::json saved;
+		std::string warning;
+		if (document.Path)
+		{
+			try
+			{
+				auto original = file.Load(ResolvePath(*document.Path));
+				saved = original.Serialize();
+				if (ComputeSha256(file.GetContents()) != *document.SourceDigest ||
+					ComputeSha256(saved.dump()) != document.SavedDigest)
+				{
+					throw std::runtime_error("The original scene changed since the checkpoint");
+				}
+			}
+			catch (const std::exception& error)
+			{
+				warning = "Recovered as an unsaved copy; choose a new filename. " + std::string(error.what());
+				document.Path.reset();
+				document.SourceDigest.reset();
+				saved = nullptr;
+				file = SceneDocumentFile{};
+				document.SavedDigest = ComputeSha256(saved.dump());
+			}
+		}
+		if (!document.Path)
+		{
+			document.SavedDigest = ComputeSha256(saved.dump());
+		}
+		// Protect the adopted work before publishing it to memory. The source
+		// checkpoint remains available until the user explicitly discards it.
+		m_Recovery->Checkpoint(document);
+		m_Scene = std::move(scene);
+		m_DocumentFile = std::move(file);
+		m_ScenePath = std::move(document.Path);
+		m_SavedScene = std::move(saved);
+		m_Undo.clear();
+		m_Redo.clear();
+		m_RecoveryPending = false;
+		return {{"restored", true},
+				{"path", m_ScenePath ? nlohmann::json(*m_ScenePath) : nlohmann::json(nullptr)},
+				{"warning", warning.empty() ? nlohmann::json(nullptr) : nlohmann::json(warning)}};
+	}
+
 	void CommandProcessor::RequireDocumentChange(const nlohmann::json& request) const
 	{
 		RequireEditing();
@@ -72,6 +182,11 @@ namespace Aster
 		auto saved = scene.Serialize();
 		auto scenePath = project.GetConfig().StartScene.generic_string();
 		auto assetRoot = project.GetAssetDirectory();
+		auto recovery = m_Recovery ? std::make_unique<RecoveryStore>(assetRoot) : nullptr;
+		if (m_Recovery)
+		{
+			m_Recovery->Clear();
+		}
 		// All filesystem operations, validation and allocations precede publication.
 		m_Project = std::move(project);
 		m_ProjectRoot = std::move(assetRoot);
@@ -81,6 +196,8 @@ namespace Aster
 		m_SavedScene = std::move(saved);
 		m_Undo.clear();
 		m_Redo.clear();
+		m_Recovery = std::move(recovery);
+		m_RecoveryPending = m_Recovery != nullptr;
 	}
 
 	void CommandProcessor::UpdateSimulation(double deltaTime)
@@ -154,6 +271,7 @@ namespace Aster
 		{
 			return;
 		}
+		m_RecoveryPending = true;
 		if (m_Undo.size() == 100)
 		{
 			m_Undo.erase(m_Undo.begin());
@@ -194,16 +312,41 @@ namespace Aster
 		const std::string command = request.at("command").get<std::string>();
 		if (command == "help")
 		{
-			return {"scene.get",		 "scene.new",		"scene.replace",   "scene.load",	 "scene.save",
-					"entity.create",	 "entity.destroy",	"entity.parent",   "entity.patch",	 "prefab.spawn",
-					"history.undo",		 "history.redo",	"history.begin",   "history.commit", "history.cancel",
-					"simulation.start",	 "simulation.step", "simulation.stop", "input.set",		 "project.export",
-					"scene.environment", "scene.status",	"project.get",	   "project.open",	 "project.create",
-					"session.close"};
+			return {
+				"scene.get",		 "scene.new",		"scene.replace",	   "scene.load",	   "scene.save",
+				"entity.create",	 "entity.destroy",	"entity.parent",	   "entity.patch",	   "prefab.spawn",
+				"history.undo",		 "history.redo",	"history.begin",	   "history.commit",   "history.cancel",
+				"simulation.start",	 "simulation.step", "simulation.stop",	   "input.set",		   "project.export",
+				"scene.environment", "scene.status",	"project.get",		   "project.open",	   "project.create",
+				"session.close",	 "recovery.list",	"recovery.checkpoint", "recovery.restore", "recovery.discard"};
+		}
+		if (command == "recovery.list")
+		{
+			EnableRecovery();
+			return m_Recovery->List();
+		}
+		if (command == "recovery.checkpoint")
+		{
+			CheckpointRecovery();
+			return {{"checkpointed", HasUnsavedChanges()}};
+		}
+		if (command == "recovery.restore")
+		{
+			return RestoreRecovery(request);
+		}
+		if (command == "recovery.discard")
+		{
+			EnableRecovery();
+			m_Recovery->Discard(request.at("session").get<std::string>());
+			return {{"discarded", true}};
 		}
 		if (command == "session.close")
 		{
 			RequireDocumentChange(request);
+			if (m_Recovery)
+			{
+				m_Recovery->Clear();
+			}
 			m_IsClosed = true;
 			return {{"closed", true}};
 		}
@@ -327,6 +470,7 @@ namespace Aster
 			m_DocumentFile.Save(m_Scene, ResolvePath(path));
 			m_ScenePath = std::move(path);
 			m_SavedScene = std::move(saved);
+			m_RecoveryPending = true;
 			return {{"saved", true}};
 		}
 		if (command == "simulation.start")
@@ -400,6 +544,7 @@ namespace Aster
 			const auto errors = m_Simulation->GetErrors();
 			m_Simulation.reset();
 			m_Scene.ReplaceFromJson(m_PlaySnapshot);
+			m_RecoveryPending = true;
 			return {{"playing", false}, {"errors", errors}};
 		}
 		RequireEditing();
@@ -416,6 +561,10 @@ namespace Aster
 				scenePath = request.at("path").get<std::string>();
 				saved = scene.Serialize();
 			}
+			if (m_Recovery)
+			{
+				m_Recovery->Clear();
+			}
 			m_Scene = std::move(scene);
 			m_DocumentFile = std::move(file);
 			m_ScenePath = std::move(scenePath);
@@ -423,6 +572,7 @@ namespace Aster
 			// History belongs to a document; it cannot resurrect another scene.
 			m_Undo.clear();
 			m_Redo.clear();
+			m_RecoveryPending = true;
 			return nlohmann::json::object();
 		}
 		if (command == "history.begin")
@@ -447,6 +597,7 @@ namespace Aster
 				if (m_Scene.Serialize() != before)
 				{
 					m_Scene.ReplaceFromJson(before);
+					m_RecoveryPending = true;
 				}
 			}
 			else
@@ -470,6 +621,7 @@ namespace Aster
 			destination.push_back(m_Scene.Serialize());
 			m_Scene.ReplaceFromJson(source.back());
 			source.pop_back();
+			m_RecoveryPending = true;
 			return m_Scene.Serialize();
 		}
 

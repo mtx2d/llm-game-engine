@@ -16,6 +16,10 @@ namespace Aster
 		[[nodiscard]] Scene Load(const std::filesystem::path& path);
 		void Save(const Scene& scene, const std::filesystem::path& path);
 		void VerifyUnchanged() const;
+		[[nodiscard]] const std::string& GetContents() const noexcept
+		{
+			return m_Contents;
+		}
 
 	  private:
 		std::optional<std::filesystem::path> m_Path;

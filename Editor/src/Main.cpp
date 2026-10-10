@@ -37,12 +37,18 @@ namespace
 	int RunAutomation(const std::filesystem::path& project)
 	{
 		Aster::CommandProcessor processor(project);
+		processor.EnableRecovery();
 		std::string line;
 		while (!processor.IsClosed() && std::getline(std::cin, line))
 		{
 			try
 			{
-				std::cout << processor.Execute(nlohmann::json::parse(line)).dump() << '\n' << std::flush;
+				auto response = processor.Execute(nlohmann::json::parse(line));
+				if (const auto warning = processor.UpdateRecovery(true))
+				{
+					response["warnings"] = {*warning};
+				}
+				std::cout << response.dump() << '\n' << std::flush;
 			}
 			catch (const std::exception& error)
 			{
@@ -179,6 +185,7 @@ int main(int argc, char** argv)
 		Aster::Renderer renderer(options);
 		{
 			Aster::GuiLayer gui(renderer, processor, project, scenePath);
+			processor.EnableRecovery();
 			if (startPlaying)
 			{
 				const auto response = processor.Execute({{"command", "simulation.start"}});

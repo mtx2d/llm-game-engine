@@ -11,6 +11,7 @@ import time
 
 from MacOSNativeWindow import compile_helper
 from NativeEditorWorkflow import prepare_project, run_workflow
+from NativeRecoveryWorkflow import run_recovery_workflow
 
 
 def check_process_identity(helper, artifacts):
@@ -153,6 +154,11 @@ class MacEditorDriver:
         response = self.request("requestClose")
         assert response.get("requested"), "Native helper did not request close"
 
+    def detach(self):
+        response = self.request("detach")
+        assert response.get("detached"), "Native helper did not detach before the intentional editor crash"
+        assert self.helper.wait(timeout=10) == 0, "Native helper failed while detaching"
+
     def close(self):
         if not self.closed:
             response = self.request("close")
@@ -180,6 +186,7 @@ class MacEditorDriver:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--recovery-only", action="store_true")
     for name in ("editor", "assets", "artifacts"):
         parser.add_argument(f"--{name}", type=Path, required=True)
     args = parser.parse_args()
@@ -187,6 +194,11 @@ def main():
     artifacts.mkdir(parents=True, exist_ok=True)
     (artifacts / "Workflow.json").unlink(missing_ok=True)
     helper, _ = compile_helper("MacOSEditorInput", artifacts)
+    if args.recovery_only:
+        run_recovery_workflow(editor, assets, artifacts,
+                              lambda process, evidence, diagnostics:
+                              MacEditorDriver(process, helper, editor, evidence, diagnostics))
+        return
     check_process_identity(helper, artifacts)
     with tempfile.TemporaryDirectory(prefix="AsterMacOSEditor-") as temporary:
         project = Path(temporary) / "Assets"

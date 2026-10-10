@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Aster/Editor/RecoveryStore.h>
 #include <Aster/Editor/SceneDocumentFile.h>
 #include <Aster/Input/InputState.h>
 #include <Aster/Project/Project.h>
@@ -7,6 +8,7 @@
 #include <Aster/Simulation/Simulation.h>
 #include <nlohmann/json.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -41,6 +43,8 @@ namespace Aster
 			return m_ScenePath;
 		}
 		[[nodiscard]] bool HasUnsavedChanges() const;
+		void EnableRecovery();
+		[[nodiscard]] std::optional<std::string> UpdateRecovery(bool force = false);
 		[[nodiscard]] bool IsClosed() const noexcept
 		{
 			return m_IsClosed;
@@ -53,6 +57,8 @@ namespace Aster
 		void RequireDocumentChange(const nlohmann::json& request) const;
 		void OpenProject(Project project);
 		void RecordChange(const nlohmann::json& before);
+		void CheckpointRecovery();
+		nlohmann::json RestoreRecovery(const nlohmann::json& request);
 		Entity RequireEntity(uint64_t id) const;
 
 		std::filesystem::path m_ProjectRoot;
@@ -68,5 +74,8 @@ namespace Aster
 		nlohmann::json m_PlaySnapshot;
 		std::optional<nlohmann::json> m_EditTransaction;
 		std::unique_ptr<Simulation> m_Simulation;
+		std::unique_ptr<RecoveryStore> m_Recovery;
+		bool m_RecoveryPending = false;
+		std::chrono::steady_clock::time_point m_NextRecoveryCheckpoint{};
 	};
 } // namespace Aster

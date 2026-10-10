@@ -329,6 +329,10 @@ struct NativeEditorInput
 					try driver.ReleaseHeldInput()
 					try game.RequestClose()
 					response["requested"] = true
+				case "detach":
+					try driver.ReleaseHeldInput()
+					try WriteJSON(["ok": true, "detached": true, "events_posted": driver.eventsPosted] as [String: Any])
+					return
 				case "close":
 					try driver.ReleaseHeldInput()
 					try game.RequestClose()

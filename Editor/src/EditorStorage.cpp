@@ -14,8 +14,18 @@ namespace Aster
 {
 	std::filesystem::path PrepareEditorStorageDirectory(const std::filesystem::path& directory)
 	{
-		const auto parent = std::filesystem::canonical(directory);
-		const auto storage = parent / ".aster";
+		return PrepareEditorDirectory(std::filesystem::canonical(directory) / ".aster");
+	}
+
+	std::filesystem::path PrepareEditorDirectory(const std::filesystem::path& directory)
+	{
+		if (!directory.has_filename() || directory.filename() == "." || directory.filename() == ".." ||
+			directory.native().find(std::filesystem::path::value_type{}) != std::filesystem::path::string_type::npos)
+		{
+			throw std::invalid_argument("Editor directory must have a name without null characters");
+		}
+		const auto parent = std::filesystem::canonical(directory.parent_path());
+		const auto storage = parent / directory.filename();
 #ifdef _WIN32
 		if (!CreateDirectoryW(storage.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS)
 		{

@@ -58,6 +58,7 @@ jobs:
           path: |
             build/debug/Testing/Temporary/*.log
             build/debug/gui-evidence/*
+            build/debug/recovery-gui-evidence/**
             build/debug/editor-render-evidence/*
             build/debug/runtime-input-evidence/*
             build/debug/asset-corpus-evidence/*
@@ -141,8 +142,10 @@ jobs:
             build/macos/device-audio-evidence/**
             build/macos/runtime-input-evidence/*
             build/macos/native-editor-evidence/*
+            build/macos/native-recovery-evidence/**
             !build/macos/runtime-input-evidence/NativeHelper/**
             !build/macos/native-editor-evidence/NativeHelper/**
+            !build/macos/native-recovery-evidence/NativeHelper/**
             build/macos-vulkan/build/*/CMakeFiles/CMakeConfigureLog.yaml
   windows-vulkan:
     runs-on: windows-2022
@@ -217,6 +220,7 @@ jobs:
             build/windows-native/renderer-evidence/*
             build/windows-native/device-audio-evidence/**
             build/windows-native/native-editor-evidence/*
+            build/windows-native/native-recovery-evidence/**
   sanitizers:
     runs-on: ubuntu-24.04
     steps:

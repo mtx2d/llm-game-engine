@@ -45,6 +45,7 @@ endfunction()
 add_library(Aster STATIC
   Engine/src/Core/ExecutablePath.cpp
   Engine/src/Core/FileLock.cpp
+  Engine/src/Core/Hash.cpp
   Engine/src/Core/JsonFile.cpp
   Engine/src/Project/Project.cpp
   Engine/src/Input/InputState.cpp
@@ -63,7 +64,7 @@ target_compile_definitions(Aster PRIVATE GLM_ENABLE_EXPERIMENTAL)
 aster_target(Aster)
 
 add_library(AsterEditorCommands STATIC Editor/src/CommandProcessor.cpp Editor/src/ProjectExporter.cpp
-  Editor/src/SceneDocumentFile.cpp Editor/src/EditorStorage.cpp)
+  Editor/src/SceneDocumentFile.cpp Editor/src/EditorStorage.cpp Editor/src/RecoveryStore.cpp)
 target_include_directories(AsterEditorCommands PUBLIC Editor/include)
 target_link_libraries(AsterEditorCommands PUBLIC Aster)
 aster_target(AsterEditorCommands)
@@ -140,6 +141,13 @@ if(ASTER_BUILD_TESTS)
   add_test(NAME FileLock COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/FileLockTests.py"
     "$<TARGET_FILE:AsterFileLockTests>" "$<TARGET_FILE:AsterEditor>")
   set_tests_properties(FileLock PROPERTIES TIMEOUT 120)
+  add_executable(AsterRecoveryTests Tests/RecoveryTests.cpp)
+  target_link_libraries(AsterRecoveryTests PRIVATE AsterEditorCommands)
+  aster_target(AsterRecoveryTests)
+  add_test(NAME Recovery COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/RecoveryTests.py"
+    --probe "$<TARGET_FILE:AsterRecoveryTests>" --editor "$<TARGET_FILE:AsterEditor>"
+    --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets")
+  set_tests_properties(Recovery PROPERTIES TIMEOUT 180)
   add_test(NAME Protocol COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/ProtocolTests.py"
     "$<TARGET_FILE:AsterEditor>" "$<TARGET_FILE:AsterRuntime>")
   set_tests_properties(Protocol PROPERTIES TIMEOUT 90)
@@ -229,6 +237,10 @@ if(ASTER_BUILD_TESTS)
         --editor "$<TARGET_FILE:AsterEditor>" --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets"
         --artifacts "${CMAKE_CURRENT_BINARY_DIR}/native-editor-evidence")
       set_tests_properties(NativeEditor PROPERTIES TIMEOUT 300 LABELS "gpu;gui;input")
+      add_test(NAME NativeRecovery COMMAND "${Python3_EXECUTABLE}" "${asterNativeEditorTest}"
+        --recovery-only --editor "$<TARGET_FILE:AsterEditor>" --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets"
+        --artifacts "${CMAKE_CURRENT_BINARY_DIR}/native-recovery-evidence")
+      set_tests_properties(NativeRecovery PROPERTIES TIMEOUT 300 LABELS "gpu;gui;input;recovery")
     endif()
     if(ASTER_BUILD_GUI AND UNIX AND NOT APPLE)
       find_program(ASTER_XVFB_RUN xvfb-run)
@@ -246,6 +258,11 @@ if(ASTER_BUILD_TESTS)
           --editor "$<TARGET_FILE:AsterEditor>" --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets"
           --artifacts "${CMAKE_CURRENT_BINARY_DIR}/gui-evidence")
         set_tests_properties(EditorGui PROPERTIES TIMEOUT 300 LABELS "gpu;gui")
+        add_test(NAME RecoveryGui COMMAND "${ASTER_XVFB_RUN}" -a -s "-screen 0 1600x1000x24 -noreset"
+          "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/RecoveryGuiTests.py"
+          --editor "$<TARGET_FILE:AsterEditor>" --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets"
+          --artifacts "${CMAKE_CURRENT_BINARY_DIR}/recovery-gui-evidence")
+        set_tests_properties(RecoveryGui PROPERTIES TIMEOUT 180 LABELS "gpu;gui;recovery")
         add_test(NAME GraphicalExport COMMAND "${ASTER_XVFB_RUN}" -a -s "-screen 0 1280x1024x24 -noreset"
           "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/ExportTests.py"
           --editor "$<TARGET_FILE:AsterEditor>" --runtime "$<TARGET_FILE:AsterRuntime>"

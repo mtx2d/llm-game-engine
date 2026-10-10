@@ -33,7 +33,7 @@ Editor and runtime load the startup scene automatically. A relative `--scene Sce
 
 New/load/project-open operations reject unsaved changes unless the request explicitly supplies `"discardChanges": true`. The GUI offers Save and continue, Discard, and Cancel when changing scenes or closing the native window. Save and continue saves the current document's recorded path even when the load-path field contains a different target. An untitled scene must first be saved to a chosen path. Saving/switching requires completed edit groups; project switching requires stopped simulation. Export rejects unfinished or unsaved current documents.
 
-Native close stops play and restores authored content before asking about unsaved changes. Cancelling retains the scene and resumes editing with play stopped. A failed Save leaves the confirmation open and the scene available. Teardown callback errors keep the interactive editor open with an error in its status bar. Automation can use `session.close` after stopping simulation and finishing edits; dirty documents require explicit discard. Successful close ends the protocol after its response and rejects further commands on that session. EOF and a bounded `--frames` run remain explicit noninteractive termination paths; automation must save work it wants to retain.
+Native close stops play and restores authored content before asking about unsaved changes. Cancelling retains the scene and resumes editing with play stopped. A failed Save leaves the confirmation open and the scene available. Teardown callback errors keep the interactive editor open with an error in its status bar. Automation can use `session.close` after stopping simulation and finishing edits; dirty documents require explicit discard. Successful close ends the protocol after its response and rejects further commands on that session. EOF and a bounded `--frames` run remain explicit noninteractive termination paths; dirty work retains its last recovery checkpoint, which is separate from an explicitly saved scene.
 
 An editor document retains the exact bytes read at load or last successful Save, bounded to 64 MiB. Save compares those bytes immediately before publication. External modifications, including whitespace edits and changes that preserve size/timestamp, cause an error. Deletion is also an error. Rejection preserves in-memory content, dirty state, document identity and Undo/Redo history. Load with explicit discard accepts the external version; Save As to a new path preserves pending work separately. Save As never replaces an existing destination. Tools intentionally reauthoring an existing scene must load it first, then edit/replace it through the shared command interface. Automation export verifies the active document's file baseline before staging, even when the in-memory scene is clean. Core and editor scene saves both reject serialized output larger than the 64 MiB reload limit.
 
@@ -55,4 +55,30 @@ Editor scene saves acquire a nonblocking OS file lock before comparing/publishin
 
 The directory name `.aster` is reserved, case-insensitively, at every asset-directory depth. Editor storage must be a real directory rather than a file, symlink or junction; newly created POSIX storage has owner-only permissions. Asset references, decoded glTF URIs and resolved aliases into this storage are rejected. The asset browser hides it, exports omit it, and Git ignores it. Move or back up the complete development project when preserving editor state. Never delete lock files while editors are running.
 
-Crash recovery, project configuration conflict protection, a graphical project browser and safe live reloading remain production work; see [ProductionPlan.md](ProductionPlan.md).
+## Crash recovery
+
+The editor automatically checkpoints completed authored changes under the active asset directory's `.aster/Recovery`. GUI updates are throttled to five seconds, so a crash can lose changes since the last successful checkpoint. An unfinished inspector/gizmo edit is deferred until completed; play checkpoints use the pre-play authoring scene. Automation persists pending completed edits before each command response. Errors remain visible in the GUI status bar or the response's `warnings`; edits remain available and persistence can be retried. Checkpoints never silently save source scenes.
+
+After a crash, the GUI offers **Recover scenes**. Select a session and choose **Recover copy**, **Discard checkpoint**, or **Later**. The toolbar's **Recover** button reopens the list. Live sessions are disabled. Recovering a scene uses the normal Save/Discard/Cancel protection for current unsaved work and clears its history. The adopted work gets its own checkpoint before replacing the in-memory scene. The source checkpoint stays until explicitly discarded, allowing recovery to be retried. Later preserves all work; successful save/clean Undo, scene/project replacement or explicit close clears only the current editor's owned checkpoint.
+
+If the original scene's exact bytes still match, recovery retains its filename and the ordinary conditional Save protection. If the original changed, disappeared or cannot be read, recovery produces an untitled copy and reports why. Choose a new filename; Save As never overwrites an existing destination. A damaged/deleted project startup scene can prevent opening its `.asterproj`; recovery remains accessible by starting automation with its existing **asset directory** instead:
+
+```sh
+build/debug/AsterEditor --automation /path/to/Game/Assets
+```
+
+```json
+{"command":"recovery.list"}
+{"command":"recovery.restore","session":"<id returned by recovery.list>"}
+{"command":"scene.save","path":"Scenes/Recovered.aster"}
+{"command":"recovery.discard","session":"<original session id>"}
+{"command":"session.close"}
+```
+
+This preserves the damaged original and project configuration for explicit repair. A graphical project repair/start screen remains planned.
+
+Each lazy session owns a native OS lock for its lifetime; a short catalog lock serializes publication, discovery and cleanup. Process death releases ownership without relying on PID files. Checkpoints use alternating scene slots and publish their manifest last through flushed atomic file writes. The previous published slot survives an interrupted next publication. SHA-256 checks reject corrupt scene bytes before restore, and strict versioned manifests reject duplicate keys, escaping paths, unknown fields and invalid source identities. This protects process-crash recovery; it does not promise directory-entry durability after power loss on every filesystem.
+
+Default limits are 32 sessions, 512 MiB of total session files, 64 MiB per scene, 64 KiB per manifest and eight known files per session. A publication that would exceed a limit is rejected while retaining the previous checkpoint. Recovery never evicts published work automatically: explicitly discard unneeded inactive sessions. Malformed/oversized regular checkpoint data can be explicitly discarded; linked files, unknown files, and linked directories are preserved and reported for manual inspection. Storage is synchronous; large-scene checkpoint latency and asynchronous persistence remain part of production performance work. Checkpoints are editor metadata and are excluded from asset imports, exports and Git.
+
+Project configuration conflict protection, graphical project management and safe live reloading remain production work; see [ProductionPlan.md](ProductionPlan.md).

@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <map>
@@ -284,6 +285,11 @@ namespace Aster
 			}
 			DrawExport();
 			DrawDocumentChange();
+			if (const auto warning = m_Commands.UpdateRecovery())
+			{
+				m_Status = *warning;
+			}
+			DrawRecovery();
 			DrawStatus();
 			ImGui::Render();
 		}
@@ -321,6 +327,11 @@ namespace Aster
 					 result.at("result").contains("errors") && !result.at("result").at("errors").empty())
 			{
 				m_Status = result.at("result").at("errors").back().get<std::string>();
+			}
+			else if (result.contains("result") && result.at("result").is_object() &&
+					 result.at("result").contains("warning") && !result.at("result").at("warning").is_null())
+			{
+				m_Status = result.at("result").at("warning").get<std::string>();
 			}
 			else
 			{
@@ -423,6 +434,13 @@ namespace Aster
 				Save();
 			}
 			ImGui::EndDisabled();
+			ImGui::SameLine();
+			if (ImGui::Button("Recover"))
+			{
+				m_ScanRecovery = true;
+				m_NextRecoveryScan = {};
+				m_ShowRecovery = true;
+			}
 			ImGui::TextDisabled("Right mouse + WASD: fly   Q/E: descend/ascend   Shift: faster   Mouse wheel: speed");
 			ImGui::SameLine();
 			ImGui::Text(" | %s%s", m_Commands.GetScene().GetName().c_str(), m_Commands.HasUnsavedChanges() ? " *" : "");
@@ -531,6 +549,114 @@ namespace Aster
 					m_PendingDocumentChange.reset();
 					request["discardChanges"] = true;
 					ChangeDocument(std::move(request));
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::EndPopup();
+			}
+		}
+
+		void DrawRecovery()
+		{
+			const auto now = std::chrono::steady_clock::now();
+			if (m_ScanRecovery && now >= m_NextRecoveryScan)
+			{
+				m_ScanRecovery = false;
+				const auto response = m_Commands.Execute({{"command", "recovery.list"}});
+				if (response.value("ok", false))
+				{
+					if (m_RecoveryScanError && m_Status == *m_RecoveryScanError)
+					{
+						m_Status = "Ready";
+					}
+					m_RecoveryScanError.reset();
+					m_RecoveryEntries = response.at("result");
+					for (const auto& entry : m_RecoveryEntries)
+					{
+						if (!entry.at("active").get<bool>())
+						{
+							m_ShowRecovery = true;
+						}
+					}
+				}
+				else
+				{
+					m_Status = response.at("error").get<std::string>();
+					m_RecoveryScanError = m_Status;
+					m_ScanRecovery = true;
+					m_NextRecoveryScan = now + std::chrono::seconds(5);
+				}
+			}
+			if (m_ShowRecovery)
+			{
+				ImGui::OpenPopup("Recover scenes");
+			}
+			const auto display = ImGui::GetIO().DisplaySize;
+			ImGui::SetNextWindowPos({display.x / 2, display.y / 2}, ImGuiCond_Appearing, {0.5f, 0.5f});
+			ImGui::SetNextWindowSize({560, 320});
+			if (ImGui::BeginPopupModal("Recover scenes", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove))
+			{
+				ImGui::TextUnformatted("Unsaved scenes from previous editor sessions");
+				ImGui::TextDisabled("Recovery keeps the checkpoint until you explicitly discard it.");
+				ImGui::BeginChild("Recovered scenes", {0, 180}, true);
+				bool recoverable = false;
+				bool discardable = false;
+				for (const auto& entry : m_RecoveryEntries)
+				{
+					const auto id = entry.at("id").get<std::string>();
+					const bool active = entry.at("active").get<bool>();
+					ImGui::PushID(id.c_str());
+					ImGui::BeginDisabled(active);
+					const auto name = entry.at("name").is_string() ? entry.at("name").get<std::string>()
+									  : active					   ? "Active editor session"
+																   : "Unreadable checkpoint";
+					if (ImGui::Selectable(name.c_str(), m_SelectedRecovery == id))
+					{
+						m_SelectedRecovery = id;
+					}
+					ImGui::EndDisabled();
+					if (entry.at("path").is_string())
+					{
+						ImGui::TextDisabled("%s", entry.at("path").get<std::string>().c_str());
+					}
+					if (entry.at("error").is_string())
+					{
+						ImGui::TextWrapped("%s", entry.at("error").get<std::string>().c_str());
+					}
+					if (m_SelectedRecovery == id && !active)
+					{
+						discardable = true;
+						recoverable = entry.at("error").is_null();
+					}
+					ImGui::PopID();
+				}
+				if (m_RecoveryEntries.empty())
+				{
+					ImGui::TextUnformatted("No recovery checkpoints are available.");
+				}
+				ImGui::EndChild();
+				ImGui::BeginDisabled(!recoverable || m_Commands.IsPlaying());
+				if (ImGui::Button("Recover copy", {150, 24}))
+				{
+					m_ShowRecovery = false;
+					ImGui::CloseCurrentPopup();
+					RequestDocumentChange({{"command", "recovery.restore"}, {"session", m_SelectedRecovery}});
+				}
+				ImGui::EndDisabled();
+				ImGui::SameLine();
+				ImGui::BeginDisabled(!discardable);
+				if (ImGui::Button("Discard checkpoint", {180, 24}))
+				{
+					if (Execute({{"command", "recovery.discard"}, {"session", m_SelectedRecovery}}).value("ok", false))
+					{
+						m_SelectedRecovery.clear();
+						m_ScanRecovery = true;
+					}
+				}
+				ImGui::EndDisabled();
+				ImGui::SameLine();
+				if (ImGui::Button("Later", {150, 24}) || ImGui::IsKeyPressed(ImGuiKey_Escape))
+				{
+					m_ShowRecovery = false;
 					ImGui::CloseCurrentPopup();
 				}
 				ImGui::EndPopup();
@@ -1318,6 +1444,12 @@ namespace Aster
 		bool m_LocalGizmo = false;
 		bool m_ShowExport = false;
 		std::optional<Json> m_PendingDocumentChange;
+		Json m_RecoveryEntries = Json::array();
+		std::string m_SelectedRecovery;
+		bool m_ScanRecovery = true;
+		std::chrono::steady_clock::time_point m_NextRecoveryScan{};
+		std::optional<std::string> m_RecoveryScanError;
+		bool m_ShowRecovery = false;
 		EditKind m_EditKind = EditKind::None;
 		bool m_CancelGizmoUntilRelease = false;
 	};
