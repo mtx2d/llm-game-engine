@@ -691,6 +691,7 @@ namespace Aster
 						"Asset path escapes asset root");
 			}
 			Require(std::filesystem::is_regular_file(absolute), "Asset file does not exist: " + relative);
+			Scene::ValidateAssetPath(absolute.lexically_relative(m_AssetRoot).generic_string());
 			return absolute;
 		}
 

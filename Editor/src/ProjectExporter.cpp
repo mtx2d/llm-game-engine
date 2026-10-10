@@ -1,4 +1,5 @@
 #include <Aster/Assets/AssetImporter.h>
+#include <Aster/Assets/AssetPath.h>
 #include <Aster/Editor/ProjectExporter.h>
 #include <Aster/Scene/Scene.h>
 
@@ -55,6 +56,8 @@ namespace Aster
 			Require(!relative.empty(), "Empty asset reference");
 			const auto resolved = std::filesystem::canonical(root / relative);
 			Require(IsWithin(root, resolved), "Asset reference escapes root: " + relative.generic_string());
+			Require(!ContainsEditorMetadata(resolved.lexically_relative(root)),
+					"Asset reference resolves into reserved editor storage: " + relative.generic_string());
 			Require(std::filesystem::is_regular_file(resolved),
 					"Asset reference is not a file: " + relative.generic_string());
 			return resolved;
@@ -75,8 +78,16 @@ namespace Aster
 			Require(ancestors.insert(canonical).second, "Cyclic asset directory link: " + directory.string());
 			for (const auto& entry : std::filesystem::directory_iterator(directory))
 			{
+				if (IsEditorMetadataName(entry.path().filename().string()))
+				{
+					continue;
+				}
 				const auto resolved = std::filesystem::canonical(entry.path());
 				Require(IsWithin(root, resolved), "Symbolic link escapes root: " + entry.path().string());
+				if (ContainsEditorMetadata(resolved.lexically_relative(root)))
+				{
+					continue;
+				}
 				const auto childRelative = relative / entry.path().filename();
 				if (std::filesystem::is_directory(resolved))
 				{
@@ -204,9 +215,12 @@ namespace Aster
 					}
 					const Path relative = DecodeUri(uri);
 					Require(!relative.is_absolute(), "Absolute glTF URI: " + uri);
+					Require(!ContainsEditorMetadata(relative), "glTF URI references reserved editor storage: " + uri);
 					const auto path = std::filesystem::canonical(root / file.Relative.parent_path() / relative);
 					Require(IsWithin(root, path) && std::filesystem::is_regular_file(path),
 							"glTF URI escapes assets or is missing: " + uri);
+					Require(!ContainsEditorMetadata(path.lexically_relative(root)),
+							"glTF URI resolves into reserved editor storage: " + uri);
 				}
 			}
 		}

@@ -425,6 +425,28 @@ void RunAssetTests()
 	Check(!symlinkError, "symlink containment test must run on Unix");
 #endif
 	Rejects([&] { (void)importer.ResolvePath("../outside.bin"); }, "direct project escape");
+	std::filesystem::create_directories(root / ".aster");
+	WriteBytes(root / ".aster/Private.bin", geometry);
+	std::filesystem::create_directories(root / ".ASTER");
+	WriteBytes(root / ".ASTER/Private.bin", geometry);
+	WriteJson(root / ".aster/Private.gltf", fixture);
+	Rejects([&] { (void)importer.LoadMesh(".aster/Private.gltf"); }, "Metadata cannot be imported as an asset");
+	for (const auto* uri : {"../.aster/Private.bin", "../%2easter/Private.bin", "../.ASTER/Private.bin"})
+	{
+		auto privateBuffer = fixture;
+		privateBuffer["buffers"][0]["uri"] = uri;
+		WriteJson(modelPath, privateBuffer);
+		Rejects([&] { (void)importer.LoadMesh("Meshes/Triangle.gltf"); }, "glTF metadata buffer URI rejected");
+	}
+	std::filesystem::create_directory_symlink(root / ".aster", root / "PrivateAlias", symlinkError);
+	if (!symlinkError)
+	{
+		Rejects([&] { (void)importer.LoadMesh("PrivateAlias/Private.gltf"); }, "Metadata aliases cannot be imported");
+		auto privateBuffer = fixture;
+		privateBuffer["buffers"][0]["uri"] = "../PrivateAlias/Private.bin";
+		WriteJson(modelPath, privateBuffer);
+		Rejects([&] { (void)importer.LoadMesh("Meshes/Triangle.gltf"); }, "glTF metadata alias URI rejected");
+	}
 	Rejects([&] { (void)importer.ResolvePath("C:\\Asset.gltf"); }, "drive path escape");
 	Rejects([&] { (void)importer.LoadMesh("Missing.gltf"); }, "missing model reported");
 

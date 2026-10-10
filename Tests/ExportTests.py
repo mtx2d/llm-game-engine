@@ -81,7 +81,20 @@ def main():
         root = Path(temporary)
         source = root / "Source Assets"
         shutil.copytree(args.assets, source)
-        expected_assets = digest_tree(source)
+        expected_assets = {name: digest for name, digest in digest_tree(source).items()
+                           if not any(part.lower() == ".aster" for part in Path(name).parts)}
+        # Private/recovery files may be invalid assets or links. They must never
+        # be traversed, validated or copied into a shipping package.
+        for relative in (".aster", "Scenes/.ASTER"):
+            private = source / relative
+            private.mkdir(exist_ok=True)
+            (private / "Invalid.aster").write_text("private unsaved work, not a game scene")
+            (private / "Owner.lock").write_text("stable lock identity")
+        try:
+            (source / "PrivateAlias").symlink_to(source / ".aster", target_is_directory=True)
+        except OSError:
+            if os.name != "nt":
+                raise
         output = root / "Game"
         output.mkdir()  # An existing empty destination is supported.
         response = export(args.editor, args.runtime, args.notices, source, output)
@@ -371,6 +384,14 @@ def main():
 
         (root / "Outside.bin").write_bytes(b"outside asset root")
         gltf = source / "Invalid.gltf"
+        private = source / ".aster"
+        private.mkdir(exist_ok=True)
+        (private / "Private.bin").write_bytes(b"private asset data")
+        for uri in (".aster/Private.bin", "%2easter/Private.bin", ".ASTER/Private.bin"):
+            gltf.write_text(json.dumps({"asset": {"version": "2.0"}, "buffers": [{"uri": uri, "byteLength": 18}]}))
+            response = export(args.editor, args.runtime, args.notices, source, failed)
+            check(not response["ok"] and "reserved editor storage" in response["error"] and not failed.exists(),
+                  f"Exporter did not reject private metadata URI {uri}: {response}")
         for uri in ("Missing.bin", "%2e%2e/Outside.bin", "https://example.invalid/remote.bin"):
             gltf.write_text(json.dumps({"asset": {"version": "2.0"}, "buffers": [{"uri": uri, "byteLength": 18}]}))
             reject_current_assets(f"glTF URI {uri}")

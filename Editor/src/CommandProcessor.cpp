@@ -122,6 +122,7 @@ namespace Aster
 				throw std::invalid_argument("Path escapes the project root");
 			}
 		}
+		Scene::ValidateAssetPath(resolved.lexically_relative(m_ProjectRoot).generic_string());
 		return resolved;
 	}
 

@@ -1,5 +1,7 @@
 #include "Aster/Scene/Scene.h"
 
+#include <Aster/Assets/AssetPath.h>
+
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
@@ -352,6 +354,7 @@ namespace Aster
 		std::replace(portable.begin(), portable.end(), '\\', '/');
 		Require(portable.front() != '/', "Asset paths must be relative to the project");
 		const std::filesystem::path relative(portable);
+		Require(!ContainsEditorMetadata(relative), "Asset paths cannot reference reserved editor storage");
 		for (const auto& segment : relative)
 		{
 			Require(segment != "..", "Asset paths cannot escape the project");

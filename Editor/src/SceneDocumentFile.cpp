@@ -1,4 +1,6 @@
+#include <Aster/Core/FileLock.h>
 #include <Aster/Core/JsonFile.h>
+#include <Aster/Editor/EditorStorage.h>
 #include <Aster/Editor/SceneDocumentFile.h>
 
 #include <nlohmann/json.hpp>
@@ -26,6 +28,12 @@ namespace Aster
 			throw std::invalid_argument("Scene exceeds the 64 MiB document size limit");
 		}
 		const bool sameFile = m_Path && *m_Path == resolved;
+		const auto storage = PrepareEditorStorageDirectory(resolved.parent_path());
+		const auto lock = FileLock::TryAcquire(storage / "Writes.lock");
+		if (!lock)
+		{
+			throw std::runtime_error("Scene directory is being saved by another editor; retry saving shortly");
+		}
 		if (!sameFile && std::filesystem::exists(resolved))
 		{
 			throw std::runtime_error("Save As destination already exists; choose a new path or load it before editing");

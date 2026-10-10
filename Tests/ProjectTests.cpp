@@ -1,5 +1,7 @@
+#include <Aster/Core/FileLock.h>
 #include <Aster/Core/JsonFile.h>
 #include <Aster/Editor/CommandProcessor.h>
+#include <Aster/Editor/EditorStorage.h>
 #include <Aster/Project/Project.h>
 #include <Aster/Scene/Scene.h>
 
@@ -99,6 +101,62 @@ namespace
 		{
 			Rejects([&] { Aster::WriteTextFileAtomically(root / "Link.json", "{}"); }, "Atomic output rejects symlink");
 			Check(Aster::ReadJsonFile(directory / "Keep.json", 1024).at("keep"), "Symlink target unchanged");
+		}
+	}
+
+	void TestSaveOwnership(const std::filesystem::path& root)
+	{
+		const auto project = Aster::Project::Create(root / "Locked Game", "Locks");
+		const auto scenePath = project.ResolveAssetPath("Scenes/Main.aster");
+		Aster::CommandProcessor editor(project.GetFilePath());
+		const auto contents = Aster::ReadTextFile(scenePath, 1024 * 1024);
+		Check(editor.Execute({{"command", "entity.create"}, {"name", "Unsaved"}}).at("ok"), "Author unsaved work");
+		const auto authored = editor.GetScene().Serialize();
+		const auto storage = Aster::PrepareEditorStorageDirectory(scenePath.parent_path());
+		auto owner = Aster::FileLock::TryAcquire(storage / "Writes.lock");
+		Check(owner != nullptr, "Own save directory");
+		const auto rejected = editor.Execute({{"command", "scene.save"}, {"path", "Scenes/Main.aster"}});
+		Check(!rejected.at("ok").get<bool>() &&
+				  rejected.at("error").get<std::string>().find("another editor") != std::string::npos,
+			  "Busy save reports retryable ownership contention");
+		Check(!editor.Execute({{"command", "scene.save"}, {"path", "Scenes/Other.aster"}}).at("ok").get<bool>() &&
+				  !std::filesystem::exists(scenePath.parent_path() / "Other.aster"),
+			  "Busy Save As publishes no file");
+		Check(editor.GetScene().Serialize() == authored && editor.HasUnsavedChanges() &&
+				  editor.GetScenePath() == "Scenes/Main.aster",
+			  "Rejected saves preserve authored state and identity");
+		Check(Aster::ReadTextFile(scenePath, 1024 * 1024) == contents, "Busy save preserves disk bytes");
+		Check(editor.Execute({{"command", "history.undo"}}).at("ok") && !editor.HasUnsavedChanges(),
+			  "Busy save preserves history and saved baseline");
+		Check(editor.Execute({{"command", "history.redo"}}).at("ok") && editor.GetScene().Serialize() == authored,
+			  "Rejected save retains Redo");
+		owner.reset();
+		Check(editor.Execute({{"command", "scene.save"}, {"path", "Scenes/Main.aster"}}).at("ok") &&
+				  !editor.HasUnsavedChanges() && Aster::Scene::Load(scenePath).Serialize() == authored,
+			  "Retry after release persists original pending work");
+		Aster::WriteTextFileAtomically(scenePath, "{}");
+		Check(!editor.Execute({{"command", "scene.save"}, {"path", "Scenes/Main.aster"}}).at("ok").get<bool>(),
+			  "External conflict still rejects under save ownership");
+		Check(Aster::FileLock::TryAcquire(storage / "Writes.lock") != nullptr,
+			  "Failed conditional publication releases directory ownership");
+		for (const auto* relative :
+			 {".aster/Checkpoint.aster", "Scenes/.ASTER/Checkpoint.aster", "Scenes\\.AsTeR\\Checkpoint.aster"})
+		{
+			Rejects([&] { Aster::Scene::ValidateAssetPath(relative); }, "Metadata references rejected portably");
+			Check(!editor.Execute({{"command", "scene.save"}, {"path", relative}}).at("ok").get<bool>(),
+				  "Commands reject reserved editor paths");
+		}
+		Aster::Scene::ValidateAssetPath("Scenes/.aster-assets/Playable.aster");
+		const auto privateScene = storage / "Checkpoint.aster";
+		Aster::Scene("Private").Save(privateScene);
+		std::error_code error;
+		std::filesystem::create_symlink(privateScene, scenePath.parent_path() / "Alias.aster", error);
+		if (!error)
+		{
+			Rejects([&] { (void)project.ResolveAssetPath("Scenes/Alias.aster"); },
+					"Project aliases to metadata rejected");
+			Check(!editor.Execute({{"command", "scene.load"}, {"path", "Scenes/Alias.aster"}}).at("ok").get<bool>(),
+				  "Editor aliases to metadata rejected");
 		}
 	}
 
@@ -443,6 +501,7 @@ void RunProjectTests()
 {
 	TemporaryDirectory directory;
 	TestJsonFiles(directory.Path);
+	TestSaveOwnership(directory.Path);
 	TestProjects(directory.Path);
 	TestDocumentLifecycle(directory.Path);
 	TestSaveConflicts(directory.Path);

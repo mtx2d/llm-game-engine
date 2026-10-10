@@ -1,5 +1,7 @@
 #include "AssetIO.h"
 
+#include <Aster/Assets/AssetPath.h>
+
 #include <stb_image.h>
 
 #include <algorithm>
@@ -127,11 +129,19 @@ namespace Aster::AssetDetail
 		}
 		std::replace(portable.begin(), portable.end(), '\\', '/');
 		const std::filesystem::path normalized(portable);
+		if (ContainsEditorMetadata(normalized))
+		{
+			throw std::invalid_argument("Asset paths cannot reference reserved editor storage");
+		}
 		if (normalized.is_absolute() || normalized.has_root_name())
 		{
 			throw std::invalid_argument("Absolute asset paths are not supported");
 		}
 		const auto resolved = std::filesystem::weakly_canonical(root / normalized);
+		if (ContainsEditorMetadata(resolved.lexically_relative(root)))
+		{
+			throw std::invalid_argument("Asset path resolves into reserved editor storage");
+		}
 		auto candidate = resolved.begin();
 		for (const auto& segment : root)
 		{

@@ -1,4 +1,5 @@
 #include <Aster/Assets/AssetImporter.h>
+#include <Aster/Assets/AssetPath.h>
 #include <Aster/Core/ExecutablePath.h>
 #include <Aster/Editor/CommandProcessor.h>
 #include <Aster/Editor/GuiLayer.h>
@@ -968,7 +969,10 @@ namespace Aster
 				std::vector<std::filesystem::directory_entry> entries;
 				for (const auto& entry : std::filesystem::directory_iterator(directory))
 				{
-					entries.push_back(entry);
+					if (!IsEditorMetadataName(entry.path().filename().string()))
+					{
+						entries.push_back(entry);
+					}
 				}
 				std::sort(entries.begin(), entries.end(),
 						  [](const auto& first, const auto& second) { return first.path() < second.path(); });
@@ -976,7 +980,8 @@ namespace Aster
 				for (const auto& entry : entries)
 				{
 					const auto canonical = std::filesystem::canonical(entry.path());
-					if (!IsWithin(m_ProjectRoot, canonical))
+					if (!IsWithin(m_ProjectRoot, canonical) ||
+						ContainsEditorMetadata(canonical.lexically_relative(m_ProjectRoot)))
 					{
 						continue;
 					}

@@ -44,6 +44,7 @@ endfunction()
 
 add_library(Aster STATIC
   Engine/src/Core/ExecutablePath.cpp
+  Engine/src/Core/FileLock.cpp
   Engine/src/Core/JsonFile.cpp
   Engine/src/Project/Project.cpp
   Engine/src/Input/InputState.cpp
@@ -62,7 +63,7 @@ target_compile_definitions(Aster PRIVATE GLM_ENABLE_EXPERIMENTAL)
 aster_target(Aster)
 
 add_library(AsterEditorCommands STATIC Editor/src/CommandProcessor.cpp Editor/src/ProjectExporter.cpp
-  Editor/src/SceneDocumentFile.cpp)
+  Editor/src/SceneDocumentFile.cpp Editor/src/EditorStorage.cpp)
 target_include_directories(AsterEditorCommands PUBLIC Editor/include)
 target_link_libraries(AsterEditorCommands PUBLIC Aster)
 aster_target(AsterEditorCommands)
@@ -133,6 +134,12 @@ if(ASTER_BUILD_TESTS)
     --project "${CMAKE_CURRENT_SOURCE_DIR}/Assets" --steps 120)
   set_tests_properties(FeatureGallery PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "all 32 engine bindings exercised")
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_executable(AsterFileLockTests Tests/FileLockTests.cpp)
+  target_link_libraries(AsterFileLockTests PRIVATE AsterEditorCommands)
+  aster_target(AsterFileLockTests)
+  add_test(NAME FileLock COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/FileLockTests.py"
+    "$<TARGET_FILE:AsterFileLockTests>" "$<TARGET_FILE:AsterEditor>")
+  set_tests_properties(FileLock PROPERTIES TIMEOUT 120)
   add_test(NAME Protocol COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/ProtocolTests.py"
     "$<TARGET_FILE:AsterEditor>" "$<TARGET_FILE:AsterRuntime>")
   set_tests_properties(Protocol PROPERTIES TIMEOUT 90)
