@@ -94,11 +94,59 @@ struct Frame
 	}
 }
 
+// Kernel identity is independent of AppKit's changing application registry.
+// Keep foreground/AX/window ownership checks separate, before every input event.
+// https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/libproc/libproc.h
+struct ProcessIdentity
+{
+	let pid: pid_t
+	let executable: URL
+	let startSeconds: UInt64
+	let startMicroseconds: UInt64
+
+	static func Read(_ pid: pid_t, executable: URL) throws -> proc_bsdinfo
+	{
+		try Require(pid > 1 && pid != getpid(), "Refusing an invalid or self PID")
+		var information = proc_bsdinfo()
+		let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+		try Require(proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &information, size) == size,
+			"Cannot read launched process identity: errno \(errno)")
+		try Require(information.pbi_pid == UInt32(pid) && information.pbi_status != UInt32(SZOMB) &&
+			information.pbi_flags & UInt32(PROC_FLAG_INEXIT) == 0, "Launched process is exiting")
+		var buffer = [CChar](repeating: 0, count: Int(PROC_PIDPATHINFO_MAXSIZE))
+		let length = buffer.withUnsafeMutableBytes
+		{
+			proc_pidpath(pid, $0.baseAddress!, UInt32($0.count))
+		}
+		try Require(length > 0 && Int(length) < buffer.count, "Cannot read launched executable: errno \(errno)")
+		let path = URL(fileURLWithPath: String(cString: buffer)).resolvingSymlinksInPath()
+		try Require(path == executable, "PID does not belong to the launched executable")
+		return information
+	}
+
+	init(pid: pid_t, executable: URL) throws
+	{
+		self.pid = pid
+		self.executable = executable.resolvingSymlinksInPath()
+		let information = try Self.Read(pid, executable: self.executable)
+		startSeconds = information.pbi_start_tvsec
+		startMicroseconds = information.pbi_start_tvusec
+	}
+
+	func CheckAlive() throws
+	{
+		let information = try Self.Read(pid, executable: executable)
+		try Require(information.pbi_start_tvsec == startSeconds && information.pbi_start_tvusec == startMicroseconds,
+			"Launched PID was reused by a different process")
+	}
+}
+
 @MainActor
 final class GameWindow
 {
 	let pid: pid_t
 	let executable: URL
+	let identity: ProcessIdentity
 	let application: AXUIElement
 	var window: SCWindow?
 	var accessibilityWindow: AXUIElement?
@@ -109,6 +157,7 @@ final class GameWindow
 		try Require(pid > 1 && pid != getpid(), "Refusing an invalid or self PID")
 		self.pid = pid
 		self.executable = executable.resolvingSymlinksInPath()
+		identity = try ProcessIdentity(pid: pid, executable: self.executable)
 		application = AXUIElementCreateApplication(pid)
 		// The system-wide element sets the default bound for derived window and
 		// close-button AX objects too. It is not used to query foreground focus.
@@ -119,13 +168,7 @@ final class GameWindow
 
 	func CheckAlive() throws
 	{
-		try Require(kill(pid, 0) == 0, "Launched game exited during native interaction")
-		guard let app = NSRunningApplication(processIdentifier: pid), let path = app.executableURL else
-		{
-			throw TestFailure(description: "Launched PID has no running application executable")
-		}
-		try Require(!app.isTerminated && path.resolvingSymlinksInPath() == executable,
-			"PID no longer belongs to the launched game executable")
+		try identity.CheckAlive()
 	}
 
 	func FindAndFocus() async throws

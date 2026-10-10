@@ -268,6 +268,17 @@ struct NativeEditorInput
 		do
 		{
 			let arguments = Array(CommandLine.arguments.dropFirst())
+			if arguments.count == 3 && arguments[0] == "--check-process"
+			{
+				guard let pid = Int32(arguments[1]) else { throw TestFailure(description: "Invalid launched PID") }
+				let identity = try ProcessIdentity(pid: pid, executable: URL(fileURLWithPath: arguments[2]))
+				try WriteJSON(["ok": true, "identity_ready": true])
+				let request = await Task.detached(operation: { readLine() }).value
+				try Require(request == "check", "Expected identity check")
+				try identity.CheckAlive()
+				try WriteJSON(["ok": true, "identity_checked": true])
+				return
+			}
 			let permissions = Permissions()
 			if arguments == ["--preflight"]
 			{

@@ -13,6 +13,51 @@ from MacOSNativeWindow import compile_helper
 from NativeEditorWorkflow import prepare_project, run_workflow
 
 
+def check_process_identity(helper, artifacts):
+    # Exercise the real kernel query without input permissions, a GUI or an
+    # AppKit registry entry. An exited/replaced target must never pass it.
+    victim = subprocess.Popen(["/bin/sleep", "60"])
+    observations = []
+    try:
+        for exited in (False, True):
+            with subprocess.Popen([str(helper), "--check-process", str(victim.pid), "/bin/sleep"],
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as probe:
+                try:
+                    with selectors.DefaultSelector() as selector:
+                        selector.register(probe.stdout, selectors.EVENT_READ)
+                        assert selector.select(10), "Kernel identity probe did not become ready"
+                    assert json.loads(probe.stdout.readline()).get("identity_ready")
+                    if exited:
+                        victim.terminate()
+                        victim.wait(timeout=5)
+                    output, errors = probe.communicate(b"check\n", timeout=10)
+                    if exited:
+                        assert probe.returncode != 0 and not output and errors, "Exited target passed identity check"
+                    else:
+                        assert probe.returncode == 0 and json.loads(output).get("identity_checked"), errors
+                    observations.append({"exited": exited, "returncode": probe.returncode,
+                                         "diagnostic": errors.decode()})
+                finally:
+                    if probe.poll() is None:
+                        probe.kill()
+                        probe.wait(timeout=5)
+        with subprocess.Popen(["/bin/sleep", "60"]) as wrong_target:
+            try:
+                wrong = subprocess.run([str(helper), "--check-process", str(wrong_target.pid), "/bin/ls"],
+                                       input=b"check\n", capture_output=True, timeout=10)
+                assert wrong.returncode != 0 and b"does not belong" in wrong.stderr and not wrong.stdout
+                observations.append({"wrong_executable": True, "returncode": wrong.returncode,
+                                     "diagnostic": wrong.stderr.decode()})
+            finally:
+                wrong_target.terminate()
+                wrong_target.wait(timeout=5)
+    finally:
+        if victim.poll() is None:
+            victim.kill()
+            victim.wait(timeout=5)
+    (artifacts / "ProcessIdentity.json").write_text(json.dumps(observations, indent=2) + "\n")
+
+
 class MacEditorDriver:
     def __init__(self, editor, helper, executable, artifacts, diagnostics):
         self.editor = editor
@@ -142,6 +187,7 @@ def main():
     artifacts.mkdir(parents=True, exist_ok=True)
     (artifacts / "Workflow.json").unlink(missing_ok=True)
     helper, _ = compile_helper("MacOSEditorInput", artifacts)
+    check_process_identity(helper, artifacts)
     with tempfile.TemporaryDirectory(prefix="AsterMacOSEditor-") as temporary:
         project = Path(temporary) / "Assets"
         scene = prepare_project(assets, project)
