@@ -451,8 +451,9 @@ namespace
 		config["AssetDirectory"] = "NewAssets";
 		config["StartScene"] = "Scenes/Main.aster";
 		const auto beforeSwitch = Aster::ReadTextFile(source, 64 * 1024);
-		Check(!configure().at("ok").get<bool>() && editor.GetScene().Serialize() == authored &&
-				  Aster::ReadTextFile(source, 64 * 1024) == beforeSwitch,
+		const auto dirtySwitch = configure();
+		Check(!dirtySwitch.at("ok").get<bool>() && dirtySwitch.at("code") == "unsaved_changes" &&
+				  editor.GetScene().Serialize() == authored && Aster::ReadTextFile(source, 64 * 1024) == beforeSwitch,
 			  "Dirty asset-root switch rejects before configuration publication");
 		Aster::WriteTextFileAtomically(source, beforeSwitch + "\n");
 		Check(!configure(true).at("ok").get<bool>() && editor.GetScene().Serialize() == authored &&

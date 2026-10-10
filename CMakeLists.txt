@@ -243,6 +243,10 @@ if(ASTER_BUILD_TESTS)
         --recovery-only --editor "$<TARGET_FILE:AsterEditor>" --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets"
         --artifacts "${CMAKE_CURRENT_BINARY_DIR}/native-recovery-evidence")
       set_tests_properties(NativeRecovery PROPERTIES TIMEOUT 300 LABELS "gpu;gui;input;recovery")
+      add_test(NAME NativeProject COMMAND "${Python3_EXECUTABLE}" "${asterNativeEditorTest}"
+        --projects-only --editor "$<TARGET_FILE:AsterEditor>" --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets"
+        --artifacts "${CMAKE_CURRENT_BINARY_DIR}/native-project-evidence")
+      set_tests_properties(NativeProject PROPERTIES TIMEOUT 300 LABELS "gpu;gui;input;project")
     endif()
     if(ASTER_BUILD_GUI AND UNIX AND NOT APPLE)
       find_program(ASTER_XVFB_RUN xvfb-run)
@@ -265,6 +269,11 @@ if(ASTER_BUILD_TESTS)
           --editor "$<TARGET_FILE:AsterEditor>" --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets"
           --artifacts "${CMAKE_CURRENT_BINARY_DIR}/recovery-gui-evidence")
         set_tests_properties(RecoveryGui PROPERTIES TIMEOUT 180 LABELS "gpu;gui;recovery")
+        add_test(NAME ProjectGui COMMAND "${ASTER_XVFB_RUN}" -a -s "-screen 0 1600x1000x24 -noreset"
+          "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/RecoveryGuiTests.py"
+          --projects-only --editor "$<TARGET_FILE:AsterEditor>" --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets"
+          --artifacts "${CMAKE_CURRENT_BINARY_DIR}/project-gui-evidence")
+        set_tests_properties(ProjectGui PROPERTIES TIMEOUT 240 LABELS "gpu;gui;project")
         add_test(NAME GraphicalExport COMMAND "${ASTER_XVFB_RUN}" -a -s "-screen 0 1280x1024x24 -noreset"
           "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/ExportTests.py"
           --editor "$<TARGET_FILE:AsterEditor>" --runtime "$<TARGET_FILE:AsterRuntime>"

@@ -1,6 +1,6 @@
 # Editor automation protocol
 
-Start `AsterEditor --automation <asset-directory|project.asterproj>`. A project file loads its startup scene. Send one JSON object per line on standard input. Each response is one JSON line with `ok`, optional `id` copied from the request, and either `result` or `error`. A response can additionally contain a `warnings` array when automatic recovery persistence fails: the command's result still describes whether the requested operation succeeded. Diagnostics never share the protocol stream. Commands execute in input order on the editor thread.
+Start `AsterEditor --automation <asset-directory|project.asterproj>`. A project file loads its startup scene. Send one JSON object per line on standard input. Each response is one JSON line with `ok`, optional `id` copied from the request, and either `result` or `error`. Rejected document changes that need an explicit dirty-work decision also carry `code: "unsaved_changes"`; the GUI uses that code to request confirmation. A response can additionally contain a `warnings` array when automatic recovery persistence fails: the command's result still describes whether the requested operation succeeded. Diagnostics never share the protocol stream. Commands execute in input order on the editor thread.
 
 The graphical editor uses the same validated command backend for scene edits, hierarchy changes, inspector controls, gizmos, history, and export. The standalone automation process supports authoring and deterministic simulation without creating a window or graphics device.
 

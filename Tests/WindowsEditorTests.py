@@ -11,6 +11,7 @@ import time
 
 from NativeEditorWorkflow import prepare_project, run_workflow, save_image
 from NativeRecoveryWorkflow import run_recovery_workflow
+from NativeProjectWorkflow import run_project_workflow
 from WindowsRuntimeInputTests import (BOOL, HANDLE, GuiThreadInfo, Input, KeyboardInput, LONG, MouseInput,
                                      NativeWindow, Rectangle, wait_for_image)
 
@@ -266,15 +267,17 @@ class EditorDriver(NativeWindow):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--recovery-only", action="store_true")
+    parser.add_argument("--projects-only", action="store_true")
     for name in ("editor", "assets", "artifacts"):
         parser.add_argument(f"--{name}", type=Path, required=True)
     args = parser.parse_args()
     assert os.name == "nt", "Windows editor interaction requires an interactive Windows desktop"
     editor, assets, artifacts = (getattr(args, name).resolve() for name in ("editor", "assets", "artifacts"))
     artifacts.mkdir(parents=True, exist_ok=True)
-    if args.recovery_only:
-        run_recovery_workflow(editor, assets, artifacts,
-                              lambda process, evidence, diagnostics: EditorDriver(process, evidence))
+    if args.recovery_only or args.projects_only:
+        workflow = run_project_workflow if args.projects_only else run_recovery_workflow
+        workflow(editor, assets, artifacts,
+                 lambda process, evidence, diagnostics: EditorDriver(process, evidence))
         return
     (artifacts / "Workflow.json").unlink(missing_ok=True)
     (artifacts / "EditorFinal.ppm").unlink(missing_ok=True)

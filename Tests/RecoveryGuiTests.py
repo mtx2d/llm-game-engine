@@ -8,6 +8,7 @@ import time
 from GuiTests import close_window
 from NativeWindow import WindowFrames, WindowRepaints
 from NativeRecoveryWorkflow import run_recovery_workflow
+from NativeProjectWorkflow import run_project_workflow
 
 
 class Editor:
@@ -91,14 +92,16 @@ class Editor:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--size", nargs=2, type=int)
+    parser.add_argument("--projects-only", action="store_true")
     for field in ("editor", "assets", "artifacts"):
         parser.add_argument("--" + field, type=Path, required=True)
     args = parser.parse_args()
     args.editor, args.assets, args.artifacts = (getattr(args, field).resolve()
                                               for field in ("editor", "assets", "artifacts"))
     args.artifacts.mkdir(parents=True, exist_ok=True)
-    run_recovery_workflow(args.editor, args.assets, args.artifacts,
-                          lambda process, evidence, diagnostics: Editor(process, evidence, diagnostics, args.size))
+    workflow = run_project_workflow if args.projects_only else run_recovery_workflow
+    workflow(args.editor, args.assets, args.artifacts,
+             lambda process, evidence, diagnostics: Editor(process, evidence, diagnostics, args.size))
 
 
 if __name__ == "__main__":

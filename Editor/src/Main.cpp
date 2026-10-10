@@ -209,6 +209,10 @@ int main(int argc, char** argv)
 				}
 				try
 				{
+					if (importer.GetRoot() != processor.GetAssetRoot())
+					{
+						importer = Aster::AssetImporter(processor.GetAssetRoot());
+					}
 					renderer.RenderScene(processor.GetScene(), importer, gui.GetRenderSettings());
 				}
 				catch (const std::exception& error)

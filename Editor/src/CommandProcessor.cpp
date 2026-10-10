@@ -11,6 +11,15 @@ namespace Aster
 {
 	namespace
 	{
+		class UnsavedChanges final : public std::logic_error
+		{
+		  public:
+			UnsavedChanges()
+				: std::logic_error("Unsaved changes: save the scene or explicitly set discardChanges to true")
+			{
+			}
+		};
+
 		uint64_t ReadUnsigned(const nlohmann::json& value, uint64_t maximum)
 		{
 			if (!value.is_number_integer() || (!value.is_number_unsigned() && value.get<int64_t>() < 0))
@@ -171,7 +180,7 @@ namespace Aster
 		const bool discardChanges = request.value("discardChanges", false);
 		if (HasUnsavedChanges() && !discardChanges)
 		{
-			throw std::logic_error("Unsaved changes: save the scene or explicitly set discardChanges to true");
+			throw UnsavedChanges();
 		}
 	}
 
@@ -355,6 +364,11 @@ namespace Aster
 			}
 			response["result"] = Dispatch(request);
 			response["ok"] = true;
+		}
+		catch (const UnsavedChanges& error)
+		{
+			response["error"] = error.what();
+			response["code"] = "unsaved_changes";
 		}
 		catch (const std::exception& error)
 		{

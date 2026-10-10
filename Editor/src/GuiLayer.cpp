@@ -118,6 +118,7 @@ namespace Aster
 				throw std::runtime_error("The graphical editor requires a window");
 			}
 			SetText(m_ScenePath, scenePath ? scenePath->generic_string() : "NewScene.aster");
+			SetText(m_NewProjectName, "My Game");
 			const auto executableDirectory = GetExecutablePath().parent_path();
 #ifdef _WIN32
 			SetText(m_RuntimePath, (executableDirectory / "AsterRuntime.exe").string());
@@ -284,6 +285,7 @@ namespace Aster
 				RequestClose();
 			}
 			DrawExport();
+			DrawProjects();
 			DrawDocumentChange();
 			if (const auto warning = m_Commands.UpdateRecovery())
 			{
@@ -319,6 +321,16 @@ namespace Aster
 		Json Execute(Json request)
 		{
 			const auto result = m_Commands.Execute(request);
+			if (result.value("ok", false))
+			{
+				const auto command = request.at("command").get<std::string>();
+				if (command == "project.open" || command == "project.create" || command == "project.configure")
+				{
+					SynchronizeProjectViews(command != "project.configure" ||
+											result.at("result").at("documentChanged").get<bool>());
+					m_ShowProjects = false;
+				}
+			}
 			if (!result.value("ok", false))
 			{
 				m_Status = result.value("error", "The action failed");
@@ -441,6 +453,22 @@ namespace Aster
 				m_NextRecoveryScan = {};
 				m_ShowRecovery = true;
 			}
+			ImGui::SameLine();
+			ImGui::BeginDisabled(m_Commands.IsPlaying());
+			if (ImGui::Button("Projects"))
+			{
+				FinishEdit(true);
+				try
+				{
+					RefreshProjectFields();
+					m_ShowProjects = true;
+				}
+				catch (const std::exception& error)
+				{
+					m_Status = error.what();
+				}
+			}
+			ImGui::EndDisabled();
 			ImGui::TextDisabled("Right mouse + WASD: fly   Q/E: descend/ascend   Shift: faster   Mouse wheel: speed");
 			ImGui::SameLine();
 			ImGui::Text(" | %s%s", m_Commands.GetScene().GetName().c_str(), m_Commands.HasUnsavedChanges() ? " *" : "");
@@ -518,7 +546,7 @@ namespace Aster
 				const bool closing =
 					m_PendingDocumentChange && m_PendingDocumentChange->at("command") == "session.close";
 				ImGui::TextUnformatted(closing ? "Save your changes before closing Aster?"
-											   : "Save your changes before opening another scene?");
+											   : "Save your changes before changing documents?");
 				bool proceed = false;
 				ImGui::SetCursorPos({12, 70});
 				ImGui::BeginDisabled(!m_Commands.GetScenePath());
@@ -553,6 +581,127 @@ namespace Aster
 				}
 				ImGui::EndPopup();
 			}
+		}
+
+		void SynchronizeProjectViews(bool documentChanged)
+		{
+			if (m_ProjectRoot != m_Commands.GetAssetRoot())
+			{
+				m_ProjectRoot = m_Commands.GetAssetRoot();
+				m_AssetDirectory.clear();
+				m_RecoveryEntries = Json::array();
+				m_SelectedRecovery.clear();
+				m_ShowRecovery = false;
+				m_ScanRecovery = true;
+				m_NextRecoveryScan = {};
+				m_RecoveryScanError.reset();
+			}
+			if (documentChanged)
+			{
+				SetText(m_ScenePath, m_Commands.GetScenePath().value_or("NewScene.aster"));
+				m_Selected = 0;
+				m_CachedSelected = 0;
+				m_TextBuffers.clear();
+			}
+		}
+
+		void RefreshProjectFields()
+		{
+			const auto response = m_Commands.Execute({{"command", "project.get"}});
+			if (!response.value("ok", false))
+			{
+				throw std::runtime_error(response.at("error").get<std::string>());
+			}
+			const auto& project = response.at("result");
+			m_HasProject = !project.at("config").is_null();
+			SetText(m_ProjectLocation, m_HasProject ? project.at("path").get<std::string>() : "");
+			if (m_HasProject)
+			{
+				const auto& config = project.at("config");
+				SetText(m_ProjectName, config.at("Name").get<std::string>());
+				SetText(m_ProjectAssets, config.at("AssetDirectory").get<std::string>());
+				SetText(m_ProjectStartup, config.at("StartScene").get<std::string>());
+			}
+		}
+
+		void DrawProjects()
+		{
+			if (!m_ShowProjects)
+			{
+				return;
+			}
+			const auto display = ImGui::GetIO().DisplaySize;
+			ImGui::SetNextWindowPos({display.x / 2, display.y / 2}, ImGuiCond_Appearing, {0.5f, 0.5f});
+			ImGui::SetNextWindowSize({640, 420});
+			if (ImGui::Begin("Projects", &m_ShowProjects, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove))
+			{
+				ImGui::BeginDisabled(m_Commands.IsPlaying());
+				ImGui::SetCursorPos({12, 36});
+				ImGui::TextUnformatted("Open a project file");
+				ImGui::SetCursorPos({12, 56});
+				ImGui::SetNextItemWidth(490);
+				ImGui::InputText("##project-location", m_ProjectLocation.data(), m_ProjectLocation.size());
+				ImGui::SameLine();
+				if (ImGui::Button("Open", {100, 0}))
+				{
+					RequestDocumentChange({{"command", "project.open"}, {"path", m_ProjectLocation.data()}});
+				}
+				ImGui::Separator();
+				ImGui::SetCursorPos({12, 96});
+				ImGui::TextUnformatted("Create in a new directory (its parent must exist)");
+				ImGui::SetCursorPos({12, 116});
+				ImGui::SetNextItemWidth(490);
+				ImGui::InputText("Directory", m_NewProjectDirectory.data(), m_NewProjectDirectory.size());
+				ImGui::SetCursorPos({12, 144});
+				ImGui::SetNextItemWidth(490);
+				ImGui::InputText("##new-project-name", m_NewProjectName.data(), m_NewProjectName.size());
+				ImGui::SameLine();
+				if (ImGui::Button("Create", {100, 0}))
+				{
+					RequestDocumentChange({{"command", "project.create"},
+										   {"path", m_NewProjectDirectory.data()},
+										   {"name", m_NewProjectName.data()}});
+				}
+				ImGui::Separator();
+				ImGui::SetCursorPos({12, 190});
+				ImGui::TextUnformatted("Current project configuration");
+				ImGui::SetCursorPos({12, 212});
+				ImGui::BeginDisabled(!m_HasProject);
+				ImGui::SetNextItemWidth(490);
+				ImGui::InputText("Name", m_ProjectName.data(), m_ProjectName.size());
+				ImGui::SetCursorPos({12, 240});
+				ImGui::SetNextItemWidth(490);
+				ImGui::InputText("Assets", m_ProjectAssets.data(), m_ProjectAssets.size());
+				ImGui::SetCursorPos({12, 268});
+				ImGui::SetNextItemWidth(490);
+				ImGui::InputText("Startup scene", m_ProjectStartup.data(), m_ProjectStartup.size());
+				ImGui::SetCursorPos({12, 304});
+				if (ImGui::Button("Save configuration", {180, 24}))
+				{
+					FinishEdit(true);
+					Json request = {{"command", "project.configure"},
+									{"config",
+									 {{"Version", 1},
+									  {"Name", m_ProjectName.data()},
+									  {"AssetDirectory", m_ProjectAssets.data()},
+									  {"StartScene", m_ProjectStartup.data()}}}};
+					const auto result = Execute(request);
+					if (!result.value("ok", false) && result.value("code", "") == "unsaved_changes")
+					{
+						m_PendingDocumentChange = std::move(request);
+					}
+				}
+				ImGui::EndDisabled();
+				ImGui::SetCursorPos({12, 344});
+				ImGui::TextWrapped(
+					"Name/startup changes keep the current scene. Changing assets opens the new startup scene.");
+				if (!m_HasProject)
+				{
+					ImGui::TextDisabled("Open or create a project to configure it.");
+				}
+				ImGui::EndDisabled();
+			}
+			ImGui::End();
 		}
 
 		void DrawRecovery()
@@ -1433,6 +1582,14 @@ namespace Aster
 		std::array<char, 4096> m_RuntimePath{};
 		std::array<char, 4096> m_NoticesPath{};
 		std::array<char, 4096> m_ExportPath{};
+		std::array<char, 4096> m_ProjectLocation{};
+		std::array<char, 4096> m_NewProjectDirectory{};
+		std::array<char, 129> m_NewProjectName{};
+		std::array<char, 129> m_ProjectName{};
+		std::array<char, 4096> m_ProjectAssets{};
+		std::array<char, 4096> m_ProjectStartup{};
+		bool m_ShowProjects = false;
+		bool m_HasProject = false;
 		std::map<std::string, std::array<char, 4096>> m_TextBuffers;
 		std::string m_Status = "Ready";
 		glm::vec3 m_CameraPosition{7, 5, 10};

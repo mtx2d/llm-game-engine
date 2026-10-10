@@ -27,6 +27,14 @@ Use the executable paths appropriate to the platform/build. Creation requires an
 
 Editor and runtime load the startup scene automatically. A relative `--scene Scenes/Other.aster` overrides it within the same asset root. A project can be moved and opened from any working directory. Existing asset-directory and explicit runtime scene workflows remain available. Export uses the project's asset root and produces a standalone package; players do not need a project file.
 
+## Graphical project controls
+
+Choose **Projects** in the toolbar to open a project file, create a project in a new directory, or edit the current project's name, asset directory and startup scene. Enter the complete `.asterproj` filename for Open, or an absent directory and name for Create. Project paths can be outside the currently open project. These controls use the same validated commands as automation and are disabled during play.
+
+**Save configuration** preserves the current scene and its unsaved work when changing the name/startup scene. A different asset root opens its startup scene and offers Save and continue, Discard or Cancel for pending work. Open/Create use the same protection. A rejected open or configuration leaves the current project available with an error in the status bar. Successful root changes reset asset browsing, selection, inspector buffers and recovery discovery; rendering and viewport picking use the new root. Meshes at identical relative filenames in different projects are reloaded from their owning root.
+
+The controls accept typed paths. A file chooser/recent-project launcher and graphical repair of a missing or corrupt startup scene remain planned; the recovery procedure below remains available for damaged projects.
+
 ## Documents and automation
 
 `scene.status` reports scene path, unsaved changes, edit group and play state. Save/load establishes the clean baseline; Undo/Redo can return to or leave it. Simulation does not dirty authored content. Changing documents clears the old document's history.
@@ -47,7 +55,7 @@ An editor document retains the exact bytes read at load or last successful Save,
 {"command":"session.close"}
 ```
 
-Project open/create paths identify explicitly requested filesystem locations; scene/component/prefab paths remain inside the active asset root. `project.get` returns null configuration/path in legacy asset-directory mode. C++ `Project::PreviewConfig` validates a candidate without writing; `UpdateConfig` validates and persists before changing the instance. Interactive project/configuration controls remain planned.
+Project open/create paths identify explicitly requested filesystem locations; scene/component/prefab paths remain inside the active asset root. `project.get` returns null configuration/path in legacy asset-directory mode. C++ `Project::PreviewConfig` validates a candidate without writing; `UpdateConfig` validates and persists before changing the instance. The Projects window exposes these operations through the shared commands.
 
 `project.configure` accepts the complete versioned `config` object shown above. It requires an open project file, stopped simulation and a finished edit group. Changing the name or startup scene keeps the current authored document, dirty state and Undo/Redo history. A different resolved asset directory replaces the current document with that directory's startup scene, so dirty work requires explicit `discardChanges`. The new document, paths and recovery store are prepared before configuration is saved; rejected validation or persistence preserves the current editor state. Success returns `configured`, `documentChanged` and nullable `warning`. A warning about old recovery cleanup means the configuration and document switch succeeded while the previous checkpoint remains available for explicit cleanup.
 
@@ -89,4 +97,4 @@ Each lazy session owns a native OS lock for its lifetime; a short catalog lock s
 
 Default limits are 32 sessions, 512 MiB of total session files, 64 MiB per scene, 64 KiB per manifest and eight known files per session. A publication that would exceed a limit is rejected while retaining the previous checkpoint. Recovery never evicts published work automatically: explicitly discard unneeded inactive sessions. Malformed/oversized regular checkpoint data can be explicitly discarded; linked files, unknown files, and linked directories are preserved and reported for manual inspection. Storage is synchronous; large-scene checkpoint latency and asynchronous persistence remain part of production performance work. Checkpoints are editor metadata and are excluded from asset imports, exports and Git.
 
-Graphical project management/startup repair and safe live reloading remain production work; see [ProductionPlan.md](ProductionPlan.md).
+A project launcher/file chooser, graphical startup repair and safe live reloading remain production work; see [ProductionPlan.md](ProductionPlan.md).
