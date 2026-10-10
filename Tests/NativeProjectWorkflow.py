@@ -11,12 +11,117 @@ from NativeEditorWorkflow import save_image
 from RecoveryTests import Editor as AutomationEditor
 
 
+def run_startup_repair_workflow(executable, artifacts, create_driver):
+    """An ordinary interactive launch must expose repair for corrupt/missing startup."""
+    results = []
+    for missing in (False, True):
+        evidence = artifacts / ("MissingStartup" if missing else "CorruptStartup")
+        evidence.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="AsterRepair-") as temporary:
+            root = Path(temporary).resolve() / "Project"
+            subprocess.run([str(executable), "--create-project", str(root), "Repair"],
+                           check=True, capture_output=True, timeout=30)
+            project = root / "Project.asterproj"
+            startup = root / "Assets/Scenes/Main.aster"
+            replacement = root / "Assets/Scenes/Ready.aster"
+            shutil.copyfile(startup, replacement)
+            expected_scene = json.loads(replacement.read_text())
+            if missing:
+                startup.unlink()
+            else:
+                startup.write_bytes(b"Damaged startup kept for manual inspection")
+            original_config = project.read_bytes()
+            # Bounded/verification launches retain strict failure behavior.
+            strict = subprocess.run([str(executable), "--project", str(project), "--frames", "1"],
+                                    capture_output=True, timeout=30)
+            assert strict.returncode != 0 and b"Aster editor:" in strict.stderr
+            with (evidence / "Editor.log").open("w+") as log, (evidence / "Input.stderr").open("w+") as diagnostics:
+                process = subprocess.Popen([str(executable), "--project", str(project), "--audio", "offline"],
+                                            stdout=log, stderr=log)
+                driver = None
+                try:
+                    driver = create_driver(process, evidence, diagnostics)
+                    driver.initialize()
+                    width, height = driver.size()
+                    left, top = width / 2 - 320, height / 2 - 210
+
+                    def wait(predicate, message):
+                        deadline = time.monotonic() + 30
+                        while time.monotonic() < deadline:
+                            driver.assert_alive()
+                            result = predicate()
+                            if result:
+                                return result
+                            time.sleep(0.05)
+                        save_image(evidence / "Failure.ppm", driver.capture())
+                        raise AssertionError(message)
+
+                    def repair_presented():
+                        image = driver.capture()
+                        pw, ph, pixels = image
+                        blue = 0
+                        for x in range(20, 600, 3):
+                            offset = (int((top + 10) * ph / height) * pw +
+                                      int((left + x) * pw / width)) * 3
+                            r, g, b = pixels[offset:offset + 3]
+                            blue += b > 90 and g > r + 15
+                        return image if blue > 150 else None
+
+                    save_image(evidence / "StartupRepair.ppm", wait(
+                        repair_presented, "Interactive launch did not present its startup repair controls"))
+                    assert project.read_bytes() == original_config
+                    if missing:
+                        assert not startup.exists()
+                    else:
+                        assert startup.read_bytes() == b"Damaged startup kept for manual inspection"
+                    driver.replace_text(left + 150, top + 277, "Scenes/Ready.aster")
+                    driver.click(left + 90, top + 316)
+                    wait(lambda: json.loads(project.read_text())["StartScene"] == "Scenes/Ready.aster",
+                         "GUI did not persist the repaired startup configuration")
+                    before_save = replacement.stat().st_mtime_ns
+                    driver.click(702, 21)
+                    wait(lambda: replacement.stat().st_mtime_ns != before_save and
+                         json.loads(replacement.read_text()) == expected_scene,
+                         "Repaired startup did not become the active saved document")
+                    if missing:
+                        assert not startup.exists()
+                    else:
+                        assert startup.read_bytes() == b"Damaged startup kept for manual inspection"
+                    save_image(evidence / "Repaired.ppm", driver.capture())
+                    driver.close()
+                    assert process.wait(timeout=30) == 0, "Startup repair editor failed normal close"
+                finally:
+                    try:
+                        if driver:
+                            try:
+                                driver.cleanup()
+                            finally:
+                                (evidence / "Input.json").write_text(json.dumps(driver.events, indent=2))
+                    finally:
+                        if process.poll() is None:
+                            process.kill()
+                            process.wait(timeout=10)
+                log.flush()
+                assert not any(marker in (evidence / "Editor.log").read_text()
+                               for marker in ("Validation Error", "VUID-", "NVRHI Error", "Aster editor:"))
+            result = {"passed": True, "missing": missing, "source_preserved": True,
+                      "configuration_repaired": True, "active_scene_exact": True}
+            (evidence / "Repair.json").write_text(json.dumps(result, indent=2))
+            results.append(result)
+    return results
+
+
 def run_project_workflow(executable, source_assets, artifacts, create_driver):
     artifacts = Path(artifacts)
     artifacts.mkdir(parents=True, exist_ok=True)
     for pattern in ("*.ppm", "*.png", "Projects.json", "Input.json"):
         for previous in artifacts.glob(pattern):
             previous.unlink()
+    for name in ("CorruptStartup", "MissingStartup"):
+        evidence = artifacts / name
+        for pattern in ("*.ppm", "*.png", "Repair.json", "Input.json"):
+            for previous in evidence.glob(pattern):
+                previous.unlink()
     with tempfile.TemporaryDirectory(prefix="AsterProjects-") as temporary:
         root = Path(temporary).resolve()
         primary = root / "Primary"
@@ -46,7 +151,7 @@ def run_project_workflow(executable, source_assets, artifacts, create_driver):
 
         with (artifacts / "Editor.log").open("w+") as log, (artifacts / "Input.stderr").open("w+") as diagnostics:
             process = subprocess.Popen([str(executable), "--project", str(project_file), "--audio", "offline"],
-                                        stdout=log, stderr=log)
+                                        cwd=root, stdout=log, stderr=log)
             driver = None
             try:
                 driver = create_driver(process, artifacts, diagnostics)
@@ -191,7 +296,7 @@ def run_project_workflow(executable, source_assets, artifacts, create_driver):
                 assert json.loads(active.read_text())["Entities"][0]["Name"] == "Camera"
 
                 projects()
-                field(150, 125, created)
+                field(150, 125, "Created")
                 field(150, 153, "Created in GUI")
                 driver.click(left + 560, top + 153)
                 created_file = created / "Project.asterproj"
@@ -201,19 +306,19 @@ def run_project_workflow(executable, source_assets, artifacts, create_driver):
                 save_scene(created_scene)
                 assert len(json.loads(created_scene.read_text())["Entities"]) == 1
                 projects()
-                field(150, 65, root / "Missing.asterproj")
+                field(150, 65, "Missing.asterproj")
                 before_failure = driver.capture()
                 created_bytes = created_scene.read_bytes()
                 driver.click(left + 560, top + 65)
                 failure_presented(before_failure, "RejectedOpen")
                 assert created_scene.read_bytes() == created_bytes
-                field(150, 65, project_file)
+                field(150, 65, "Primary/Project.asterproj")
                 driver.click(left + 560, top + 65)
                 colored(2, "ReopenedBlue")
                 driver.click(55, 151)
                 driver.replace_text(width - 250, 171, "Saved before project switch")
                 projects()
-                field(150, 65, created_file)
+                field(150, 65, "Created/Project.asterproj")
                 driver.click(left + 560, top + 65)
                 confirmation("SaveBeforeOpen")
                 driver.click(width / 2 - 153, height / 2 + 8)  # Save and continue.
@@ -243,5 +348,6 @@ def run_project_workflow(executable, source_assets, artifacts, create_driver):
             log.flush()
             assert not any(marker in (artifacts / "Editor.log").read_text()
                            for marker in ("Validation Error", "VUID-", "NVRHI Error", "Aster editor:"))
+        report["startup_repair"] = run_startup_repair_workflow(executable, artifacts, create_driver)
         (artifacts / "Projects.json").write_text(json.dumps(report, indent=2))
     print("Native GUI project configuration, dirty protection, root rebinding, creation and opening passed")

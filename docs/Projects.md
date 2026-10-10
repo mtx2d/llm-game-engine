@@ -11,7 +11,7 @@ A `.asterproj` file records the project name, asset directory and startup scene.
 }
 ```
 
-`AssetDirectory` is relative to the project file's directory; `StartScene` is relative to the asset directory. Serialized paths use forward slashes and cannot escape their roots through traversal or symbolic links. Opening validates the startup scene. Unknown fields, duplicate keys, unsupported versions, invalid UTF-8, control characters in names, missing directories/scenes and excessive size/nesting fail with an error. Project names contain 1–128 UTF-8 bytes; project files are limited to 64 KiB.
+`AssetDirectory` is relative to the project file's directory; `StartScene` is relative to the asset directory. Serialized paths use forward slashes and cannot escape their roots through traversal or symbolic links. Ordinary opening validates the startup scene; the explicit editor repair path described below permits unavailable startup contents while retaining every configuration and path check. Unknown fields, duplicate keys, unsupported versions, invalid UTF-8, control characters in names, missing directories/scenes and excessive size/nesting fail with an error. Project names contain 1–128 UTF-8 bytes; project files are limited to 64 KiB.
 
 ## Create and launch
 
@@ -31,9 +31,9 @@ Editor and runtime load the startup scene automatically. A relative `--scene Sce
 
 Choose **Projects** in the toolbar to open a project file, create a project in a new directory, or edit the current project's name, asset directory and startup scene. Enter the complete `.asterproj` filename for Open, or an absent directory and name for Create. Project paths can be outside the currently open project. These controls use the same validated commands as automation and are disabled during play.
 
-**Save configuration** preserves the current scene and its unsaved work when changing the name/startup scene. A different asset root opens its startup scene and offers Save and continue, Discard or Cancel for pending work. Open/Create use the same protection. A rejected open or configuration leaves the current project available with an error in the status bar. Successful root changes reset asset browsing, selection, inspector buffers and recovery discovery; rendering and viewport picking use the new root. Meshes at identical relative filenames in different projects are reloaded from their owning root.
+**Save configuration** normally preserves the current scene and its unsaved work when changing the name/startup scene. Completing startup repair opens the validated replacement scene with the same pending-work protection as a root change. A different asset root opens its startup scene and offers Save and continue, Discard or Cancel for pending work. Open/Create use the same protection. A rejected open or configuration leaves the current project available with an error in the status bar. Successful root changes reset asset browsing, selection, inspector buffers and recovery discovery; rendering and viewport picking use the new root. Meshes at identical relative filenames in different projects are reloaded from their owning root.
 
-The controls accept typed paths. A file chooser/recent-project launcher and graphical repair of a missing or corrupt startup scene remain planned; the recovery procedure below remains available for damaged projects.
+The controls accept absolute paths or paths relative to the editor process working directory. A file chooser/recent-project launcher remains planned.
 
 ## Documents and automation
 
@@ -57,7 +57,7 @@ An editor document retains the exact bytes read at load or last successful Save,
 
 Project open/create paths identify explicitly requested filesystem locations; scene/component/prefab paths remain inside the active asset root. `project.get` returns null configuration/path in legacy asset-directory mode. C++ `Project::PreviewConfig` validates a candidate without writing; `UpdateConfig` validates and persists before changing the instance. The Projects window exposes these operations through the shared commands.
 
-`project.configure` accepts the complete versioned `config` object shown above. It requires an open project file, stopped simulation and a finished edit group. Changing the name or startup scene keeps the current authored document, dirty state and Undo/Redo history. A different resolved asset directory replaces the current document with that directory's startup scene, so dirty work requires explicit `discardChanges`. The new document, paths and recovery store are prepared before configuration is saved; rejected validation or persistence preserves the current editor state. Success returns `configured`, `documentChanged` and nullable `warning`. A warning about old recovery cleanup means the configuration and document switch succeeded while the previous checkpoint remains available for explicit cleanup.
+`project.configure` accepts the complete versioned `config` object shown above. It requires an open project file, stopped simulation and a finished edit group. Changing the name or startup scene normally keeps the current authored document, dirty state and Undo/Redo history. During startup repair, saving a valid configuration instead opens its startup scene, including within the same asset root, and protects pending work before that replacement. A different resolved asset directory replaces the current document with that directory's startup scene, so dirty work requires explicit `discardChanges`. The new document, paths and recovery store are prepared before configuration is saved; rejected validation or persistence preserves the current editor state. Success returns `configured`, `documentChanged` and nullable `warning`. A warning about old recovery cleanup means the configuration and document switch succeeded while the previous checkpoint remains available for explicit cleanup.
 
 ```json
 {"command":"project.configure","config":{"Version":1,"Name":"My Game","AssetDirectory":"Assets","StartScene":"Scenes/Other.aster"}}
@@ -77,7 +77,18 @@ The editor automatically checkpoints completed authored changes under the active
 
 After a crash, the GUI offers **Recover scenes**. Select a session and choose **Recover copy**, **Discard checkpoint**, or **Later**. The toolbar's **Recover** button reopens the list. Live sessions are disabled. Recovering a scene uses the normal Save/Discard/Cancel protection for current unsaved work and clears its history. The adopted work gets its own checkpoint before replacing the in-memory scene. The source checkpoint stays until explicitly discarded, allowing recovery to be retried. Later preserves all work; successful save/clean Undo, scene/project replacement or explicit close clears only the current editor's owned checkpoint.
 
-If the original scene's exact bytes still match, recovery retains its filename and the ordinary conditional Save protection. If the original changed, disappeared or cannot be read, recovery produces an untitled copy and reports why. Choose a new filename; Save As never overwrites an existing destination. A damaged/deleted project startup scene can prevent opening its `.asterproj`; recovery remains accessible by starting automation with its existing **asset directory** instead:
+If the original scene's exact bytes still match, recovery retains its filename and the ordinary conditional Save protection. If the original changed, disappeared or cannot be read, recovery produces an untitled copy and reports why. Choose a new filename; Save As never overwrites an existing destination. A normal interactive `AsterEditor --project /path/to/Game/Project.asterproj` launch opens **startup repair** when the configuration and asset root are valid but the startup scene is missing, unreadable or corrupt. The Projects window appears with the error and an empty untitled workspace; it does not overwrite or recreate the original scene. From another open project, choose **Open for repair** to enter the same workflow with ordinary dirty-document protection. Play and export remain blocked until a valid startup configuration is saved.
+
+Choose an existing valid scene in the startup field and **Save configuration**, or use **Recover** to restore checkpointed work. Save recovered work to a new `.aster` filename, then select that scene as the startup and save configuration. Configuration retains its exact-byte conflict protection; a rejected repair preserves the workspace and recovery data. Successful repair loads the selected startup as a clean document with isolated history. A corrupt original remains available for inspection.
+
+Runtime, ordinary automation startup, `--play`, and bounded `--frames` editor launches retain strict startup validation. Automation can explicitly enter repair through an existing asset-directory session:
+
+```json
+{"command":"project.open","path":"/path/to/Game/Project.asterproj","repairStartup":true}
+{"command":"project.get"}
+```
+
+`project.get.startupError` and the open result's `warning` describe an unresolved startup failure; each is null for a healthy project. Repair never bypasses configuration versions, path containment, asset-root existence or private-storage restrictions. Invalid project configuration still fails opening. Recovery remains accessible independently by starting automation with the existing **asset directory**:
 
 ```sh
 build/debug/AsterEditor --automation /path/to/Game/Assets
@@ -91,10 +102,10 @@ build/debug/AsterEditor --automation /path/to/Game/Assets
 {"command":"session.close"}
 ```
 
-This preserves the damaged original and project configuration for explicit repair. A graphical project repair/start screen remains planned.
+This independent recovery path preserves the damaged original and project configuration. Use an explicit repair-open and `project.configure` to select the saved replacement scene.
 
 Each lazy session owns a native OS lock for its lifetime; a short catalog lock serializes publication, discovery and cleanup. Process death releases ownership without relying on PID files. Checkpoints use alternating scene slots and publish their manifest last through flushed atomic file writes. The previous published slot survives an interrupted next publication. SHA-256 checks reject corrupt scene bytes before restore, and strict versioned manifests reject duplicate keys, escaping paths, unknown fields and invalid source identities. This protects process-crash recovery; it does not promise directory-entry durability after power loss on every filesystem.
 
 Default limits are 32 sessions, 512 MiB of total session files, 64 MiB per scene, 64 KiB per manifest and eight known files per session. A publication that would exceed a limit is rejected while retaining the previous checkpoint. Recovery never evicts published work automatically: explicitly discard unneeded inactive sessions. Malformed/oversized regular checkpoint data can be explicitly discarded; linked files, unknown files, and linked directories are preserved and reported for manual inspection. Storage is synchronous; large-scene checkpoint latency and asynchronous persistence remain part of production performance work. Checkpoints are editor metadata and are excluded from asset imports, exports and Git.
 
-A project launcher/file chooser, graphical startup repair and safe live reloading remain production work; see [ProductionPlan.md](ProductionPlan.md).
+A project launcher/file chooser and safe live reloading remain production work; see [ProductionPlan.md](ProductionPlan.md).

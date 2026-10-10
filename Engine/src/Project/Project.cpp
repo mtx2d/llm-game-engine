@@ -46,13 +46,13 @@ namespace Aster
 		}
 	} // namespace
 
-	Project::Project(std::filesystem::path filePath, ProjectConfig config, std::string contents)
+	Project::Project(std::filesystem::path filePath, ProjectConfig config, std::string contents, bool requireStartup)
 		: m_FilePath(std::move(filePath)), m_Config(std::move(config)), m_Contents(std::move(contents))
 	{
-		m_AssetDirectory = ValidateConfig(m_Config);
+		m_AssetDirectory = ValidateConfig(m_Config, requireStartup);
 	}
 
-	std::filesystem::path Project::ValidateConfig(const ProjectConfig& config) const
+	std::filesystem::path Project::ValidateConfig(const ProjectConfig& config, bool requireStartup) const
 	{
 		if (config.Name.empty() || config.Name.size() > 128 ||
 			std::any_of(config.Name.begin(), config.Name.end(),
@@ -75,7 +75,10 @@ namespace Aster
 		{
 			throw std::invalid_argument("Project startup scene must have the .aster extension");
 		}
-		(void)Scene::Load(startScene);
+		if (requireStartup)
+		{
+			(void)Scene::Load(startScene);
+		}
 		return assetDirectory;
 	}
 
@@ -98,6 +101,16 @@ namespace Aster
 
 	Project Project::Load(const std::filesystem::path& filePath)
 	{
+		return ReadConfiguration(filePath, true);
+	}
+
+	Project Project::LoadForRepair(const std::filesystem::path& filePath)
+	{
+		return ReadConfiguration(filePath, false);
+	}
+
+	Project Project::ReadConfiguration(const std::filesystem::path& filePath, bool requireStartup)
+	{
 		if (filePath.native().find(std::filesystem::path::value_type{}) != std::filesystem::path::string_type::npos ||
 			filePath.extension() != ".asterproj" || std::filesystem::is_symlink(filePath))
 		{
@@ -106,7 +119,7 @@ namespace Aster
 		const auto canonical = std::filesystem::canonical(filePath);
 		auto contents = ReadTextFile(canonical, 64 * 1024);
 		auto config = DeserializeConfig(ParseJson(contents, 8));
-		return Project(canonical, std::move(config), std::move(contents));
+		return Project(canonical, std::move(config), std::move(contents), requireStartup);
 	}
 
 	Project Project::Create(const std::filesystem::path& directory, std::string name)

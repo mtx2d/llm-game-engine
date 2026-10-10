@@ -20,6 +20,9 @@ namespace Aster
 	{
 	  public:
 		[[nodiscard]] static Project Load(const std::filesystem::path& filePath);
+		// Editor repair only: validate configuration/containment without reading the
+		// startup scene. Updating configuration still requires a valid startup scene.
+		[[nodiscard]] static Project LoadForRepair(const std::filesystem::path& filePath);
 		// Destination must be absent, with an existing parent. Publishes a complete
 		// project containing a camera scene through a sibling staging directory.
 		[[nodiscard]] static Project Create(const std::filesystem::path& directory, std::string name);
@@ -39,8 +42,10 @@ namespace Aster
 		[[nodiscard]] std::filesystem::path ResolveAssetPath(const std::filesystem::path& relative) const;
 
 	  private:
-		Project(std::filesystem::path filePath, ProjectConfig config, std::string contents = {});
-		std::filesystem::path ValidateConfig(const ProjectConfig& config) const;
+		Project(std::filesystem::path filePath, ProjectConfig config, std::string contents = {},
+				bool requireStartup = true);
+		static Project ReadConfiguration(const std::filesystem::path& filePath, bool requireStartup);
+		std::filesystem::path ValidateConfig(const ProjectConfig& config, bool requireStartup = true) const;
 
 		std::filesystem::path m_FilePath;
 		std::filesystem::path m_AssetDirectory;

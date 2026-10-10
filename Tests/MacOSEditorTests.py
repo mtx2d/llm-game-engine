@@ -131,12 +131,17 @@ class MacEditorDriver:
         self.mouse("up", points[-1])
 
     def replace_text(self, x, y, text):
+        assert text and len(text.encode("utf-16-le")) // 2 <= 256, "Native text input exceeds its bound"
         self.click(x, y)
         # The helper paces modifier/key edges so ImGui can observe Command+A.
         # Persisted scene predicates establish completion after text input.
         for key, down in (("Command", True), ("A", True), ("A", False), ("Command", False)):
             self.request("key", key=key, down=down)
-        self.request("text", text=text)
+        # The Swift helper paces both edges of each character. A long path
+        # cannot fit a single 30-second acknowledgment; retire bounded chunks
+        # without changing its focus, identity or native event checks.
+        for start in range(0, len(text), 16):
+            self.request("text", text=text[start:start + 16])
         self.request("key", key="Return", down=True)
         self.request("key", key="Return", down=False)
 
@@ -185,6 +190,31 @@ class MacEditorDriver:
             stream.close()
 
 
+def check_text_chunking():
+    # Exercise the input protocol without posting events. Native workflows below
+    # separately prove that these requests reach the actual owned text widgets.
+    for text in ("A" * 256, "🚀" * 128, "File names with spaces", "A"):
+        driver = object.__new__(MacEditorDriver)
+        events = []
+        driver.click = lambda *point: events.append(("click", point))
+        driver.request = lambda operation, **fields: events.append((operation, fields))
+        driver.replace_text(100, 200, text)
+        chunks = [fields["text"] for operation, fields in events if operation == "text"]
+        assert "".join(chunks) == text and all(len(chunk.encode("utf-16-le")) // 2 <= 32 for chunk in chunks)
+        assert events[1:5] == [("key", {"key": key, "down": down}) for key, down in
+                               (("Command", True), ("A", True), ("A", False), ("Command", False))]
+        assert events[-2:] == [("key", {"key": "Return", "down": True}),
+                              ("key", {"key": "Return", "down": False})]
+        events.clear()
+        for invalid in ("", "🚀" * 129):
+            try:
+                driver.replace_text(100, 200, invalid)
+            except AssertionError:
+                assert not events, "Invalid text posted partial input"
+            else:
+                raise AssertionError("Oversized/empty native text was accepted")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--recovery-only", action="store_true")
@@ -195,6 +225,7 @@ def main():
     editor, assets, artifacts = (getattr(args, name).resolve() for name in ("editor", "assets", "artifacts"))
     artifacts.mkdir(parents=True, exist_ok=True)
     (artifacts / "Workflow.json").unlink(missing_ok=True)
+    check_text_chunking()
     helper, _ = compile_helper("MacOSEditorInput", artifacts)
     if args.recovery_only or args.projects_only:
         workflow = run_project_workflow if args.projects_only else run_recovery_workflow

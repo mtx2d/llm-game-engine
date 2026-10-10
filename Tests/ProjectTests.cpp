@@ -497,6 +497,119 @@ namespace
 			  "Configuration requires an owned project file");
 	}
 
+	void TestStartupRepair(const std::filesystem::path& root)
+	{
+		const auto project = Aster::Project::Create(root / "Startup repair", "Repair");
+		const auto source = project.GetFilePath();
+		const auto startup = project.ResolveAssetPath("Scenes/Main.aster");
+		const auto baseline = Aster::ReadTextFile(source, 64 * 1024);
+		std::string recoveryID;
+		nlohmann::json authored;
+		{
+			Aster::CommandProcessor previous(source);
+			previous.EnableRecovery();
+			Check(previous.Execute({{"command", "entity.create"}, {"name", "Recovered startup work"}}).at("ok"),
+				  "Prepare recoverable startup work");
+			authored = previous.GetScene().Serialize();
+			Check(previous.Execute({{"command", "recovery.checkpoint"}}).at("ok"), "Persist prior startup work");
+			recoveryID = previous.Execute({{"command", "recovery.list"}}).at("result")[0].at("id");
+		}
+		Aster::WriteTextFileAtomically(startup, "Damaged source must remain intact");
+		Rejects([&] { (void)Aster::Project::Load(source); }, "Ordinary project opening rejects corrupt startup");
+		Rejects([&] { Aster::CommandProcessor strict(source); }, "Automation defaults to strict startup validation");
+		auto repair = Aster::Project::LoadForRepair(source);
+		repair.VerifyUnchanged();
+		Rejects([&] { repair.UpdateConfig(repair.GetConfig()); }, "Repair load cannot save an invalid startup");
+		Check(Aster::ReadTextFile(source, 64 * 1024) == baseline, "Repair inspection never rewrites configuration");
+
+		Aster::CommandProcessor editor(project.GetAssetDirectory());
+		Check(editor.Execute({{"command", "entity.create"}, {"name", "Current pending work"}}).at("ok"),
+			  "Prepare current dirty document");
+		const auto current = editor.GetScene().Serialize();
+		const auto currentHandle = editor.GetScene().Entities().front();
+		auto request =
+			nlohmann::json{{"command", "project.open"}, {"path", source.generic_string()}, {"repairStartup", true}};
+		const auto blocked = editor.Execute(request);
+		Check(!blocked.at("ok").get<bool>() && blocked.at("code") == "unsaved_changes" &&
+				  editor.GetScene().Serialize() == current && editor.GetScene().IsAlive(currentHandle),
+			  "Repair opening still protects the current authored document");
+		request["discardChanges"] = true;
+		const auto opened = editor.Execute(request);
+		Check(opened.at("ok") && opened.at("result").at("warning").is_string() && editor.GetStartupError() &&
+				  !editor.GetScenePath() && editor.GetScene().Size() == 0 && !editor.HasUnsavedChanges(),
+			  "Explicit repair opens a clean unnamed workspace and reports the startup error");
+		Check(editor.Execute({{"command", "project.get"}}).at("result").at("startupError").is_string() &&
+				  !editor.Execute({{"command", "simulation.start"}, {"audio", "offline"}}).at("ok").get<bool>() &&
+				  !editor.Execute({{"command", "project.export"}}).at("ok").get<bool>(),
+			  "Unrepaired startup is observable and blocks play/export");
+		Check(editor.Execute({{"command", "recovery.restore"}, {"session", recoveryID}}).at("ok") &&
+				  editor.GetScene().Serialize() == authored && !editor.GetScenePath() && editor.HasUnsavedChanges(),
+			  "Startup repair exposes prior recovery work as an untitled copy after source corruption");
+		Check(!editor.Execute({{"command", "scene.save"}, {"path", "Scenes/Main.aster"}}).at("ok").get<bool>() &&
+				  Aster::ReadTextFile(startup, 1024) == "Damaged source must remain intact",
+			  "Repair cannot silently overwrite the damaged source");
+		Check(editor.Execute({{"command", "scene.save"}, {"path", "Scenes/Recovered.aster"}}).at("ok"),
+			  "Recovered work can be explicitly saved to a new scene");
+		auto config = repair.Serialize();
+		config["StartScene"] = "Scenes/Recovered.aster";
+		const auto recoveredHandle = editor.GetScene().Entities().front();
+		Check(editor
+				  .Execute({{"command", "entity.patch"},
+							{"entity", editor.GetScene().GetPersistentID(recoveredHandle)},
+							{"patch", {{"Name", "Pending repair edits"}}}})
+				  .at("ok"),
+			  "Prepare unsaved work during startup repair");
+		const auto pending = editor.GetScene().Serialize();
+		const auto pendingHandle = editor.GetScene().Entities().front();
+		const auto dirtyRepair = editor.Execute({{"command", "project.configure"}, {"config", config}});
+		Check(!dirtyRepair.at("ok").get<bool>() && dirtyRepair.at("code") == "unsaved_changes" &&
+				  editor.GetStartupError() && editor.GetScene().Serialize() == pending &&
+				  editor.GetScene().IsAlive(pendingHandle) && Aster::ReadTextFile(source, 64 * 1024) == baseline,
+			  "Same-root startup repair protects pending work before persisting configuration");
+		Check(editor.Execute({{"command", "history.undo"}}).at("ok") && editor.GetScene().Serialize() == authored &&
+				  !editor.HasUnsavedChanges(),
+			  "Rejected repair retains usable history and the saved baseline");
+		Aster::WriteTextFileAtomically(source, baseline + "\n");
+		const auto stable = editor.GetScene().Entities().front();
+		Check(!editor.Execute({{"command", "project.configure"}, {"config", config}}).at("ok").get<bool>() &&
+				  editor.GetStartupError() && editor.GetScene().IsAlive(stable) &&
+				  editor.GetScene().Serialize() == authored && !editor.HasUnsavedChanges(),
+			  "Repair configuration conflicts retain the recovered document and repair state");
+		Aster::WriteTextFileAtomically(source, baseline);
+		const auto configured = editor.Execute({{"command", "project.configure"}, {"config", config}});
+		Check(configured.at("ok") && configured.at("result").at("documentChanged").get<bool>() &&
+				  !editor.GetStartupError() && editor.GetScenePath() == "Scenes/Recovered.aster" &&
+				  editor.GetScene().Serialize() == authored && !editor.HasUnsavedChanges(),
+			  "Validated configuration commits and loads the repaired startup document");
+		Check(Aster::Project::Load(source).GetConfig().StartScene == "Scenes/Recovered.aster" &&
+				  !editor.Execute({{"command", "history.undo"}}).at("ok").get<bool>() &&
+				  editor.Execute({{"command", "simulation.start"}, {"audio", "offline"}}).at("ok") &&
+				  editor.Execute({{"command", "simulation.stop"}}).at("ok"),
+			  "Repaired projects reopen strictly, isolate history and enable normal play");
+		Check(Aster::ReadTextFile(startup, 1024) == "Damaged source must remain intact",
+			  "Repair completion retains the corrupt original");
+		const auto missing = Aster::Project::Create(root / "Missing startup", "Missing");
+		std::filesystem::remove(missing.ResolveAssetPath("Scenes/Main.aster"));
+		Aster::CommandProcessor missingEditor(missing.GetFilePath(), {}, true);
+		Check(missingEditor.GetStartupError() && !missingEditor.GetScenePath(), "Missing startup opens for repair");
+		Check(!std::filesystem::exists(missing.ResolveAssetPath("Scenes/Main.aster")),
+			  "Repair opening does not recreate a deleted startup scene");
+		auto invalid = missing.Serialize();
+		for (const auto* field : {"StartScene", "AssetDirectory"})
+		{
+			const auto saved = invalid[field];
+			invalid[field] = "../Outside.aster";
+			Aster::WriteTextFileAtomically(missing.GetFilePath(), invalid.dump());
+			Rejects([&] { (void)Aster::Project::LoadForRepair(missing.GetFilePath()); },
+					"Repair never bypasses project path containment");
+			invalid[field] = saved;
+		}
+		invalid["Version"] = 999;
+		Aster::WriteTextFileAtomically(missing.GetFilePath(), invalid.dump());
+		Rejects([&] { (void)Aster::Project::LoadForRepair(missing.GetFilePath()); },
+				"Repair never bypasses unsupported configuration versions");
+	}
+
 	void TestSaveConflicts(const std::filesystem::path& root)
 	{
 		const auto project = Aster::Project::Create(root / "Conflicts", "Conflicts");
@@ -742,6 +855,7 @@ void RunProjectTests()
 	TestProjects(directory.Path);
 	TestConfigurationConflicts(directory.Path);
 	TestConfigureCommand(directory.Path);
+	TestStartupRepair(directory.Path);
 	TestDocumentLifecycle(directory.Path);
 	TestSaveConflicts(directory.Path);
 	TestSessionClose(directory.Path);

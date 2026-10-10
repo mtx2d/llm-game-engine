@@ -119,6 +119,12 @@ namespace Aster
 			}
 			SetText(m_ScenePath, scenePath ? scenePath->generic_string() : "NewScene.aster");
 			SetText(m_NewProjectName, "My Game");
+			if (m_Commands.GetStartupError())
+			{
+				RefreshProjectFields();
+				m_ShowProjects = true;
+				m_Status = *m_Commands.GetStartupError();
+			}
 			const auto executableDirectory = GetExecutablePath().parent_path();
 #ifdef _WIN32
 			SetText(m_RuntimePath, (executableDirectory / "AsterRuntime.exe").string());
@@ -328,7 +334,11 @@ namespace Aster
 				{
 					SynchronizeProjectViews(command != "project.configure" ||
 											result.at("result").at("documentChanged").get<bool>());
-					m_ShowProjects = false;
+					m_ShowProjects = m_Commands.GetStartupError().has_value();
+					if (m_ShowProjects)
+					{
+						RefreshProjectFields();
+					}
 				}
 			}
 			if (!result.value("ok", false))
@@ -422,10 +432,12 @@ namespace Aster
 			}
 			ImGui::EndDisabled();
 			ImGui::SameLine();
+			ImGui::BeginDisabled(m_Commands.GetStartupError().has_value());
 			if (ImGui::Button(m_Commands.IsPlaying() ? "Stop" : "Play"))
 			{
 				Execute({{"command", m_Commands.IsPlaying() ? "simulation.stop" : "simulation.start"}});
 			}
+			ImGui::EndDisabled();
 			ImGui::SameLine();
 			ImGui::BeginDisabled(m_Commands.IsPlaying());
 			if (ImGui::Button("Export game"))
@@ -638,6 +650,12 @@ namespace Aster
 				ImGui::BeginDisabled(m_Commands.IsPlaying());
 				ImGui::SetCursorPos({12, 36});
 				ImGui::TextUnformatted("Open a project file");
+				ImGui::SetCursorPos({430, 32});
+				if (ImGui::Button("Open for repair"))
+				{
+					RequestDocumentChange(
+						{{"command", "project.open"}, {"path", m_ProjectLocation.data()}, {"repairStartup", true}});
+				}
 				ImGui::SetCursorPos({12, 56});
 				ImGui::SetNextItemWidth(490);
 				ImGui::InputText("##project-location", m_ProjectLocation.data(), m_ProjectLocation.size());
@@ -664,7 +682,9 @@ namespace Aster
 				}
 				ImGui::Separator();
 				ImGui::SetCursorPos({12, 190});
-				ImGui::TextUnformatted("Current project configuration");
+				ImGui::TextUnformatted(m_Commands.GetStartupError()
+										   ? "Startup repair: select a valid startup scene below"
+										   : "Current project configuration");
 				ImGui::SetCursorPos({12, 212});
 				ImGui::BeginDisabled(!m_HasProject);
 				ImGui::SetNextItemWidth(490);
@@ -694,7 +714,10 @@ namespace Aster
 				ImGui::EndDisabled();
 				ImGui::SetCursorPos({12, 344});
 				ImGui::TextWrapped(
-					"Name/startup changes keep the current scene. Changing assets opens the new startup scene.");
+					m_Commands.GetStartupError()
+						? "Choose a valid startup scene and save configuration, or use Recover to preserve "
+						  "checkpointed work."
+						: "Name/startup changes keep the current scene. Changing assets opens the new startup scene.");
 				if (!m_HasProject)
 				{
 					ImGui::TextDisabled("Open or create a project to configure it.");
@@ -1557,7 +1580,8 @@ namespace Aster
 			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {8, 5});
 			ImGui::Begin("Status", nullptr,
 						 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
-							 ImGuiWindowFlags_NoScrollbar);
+							 ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoFocusOnAppearing |
+							 ImGuiWindowFlags_NoNavFocus);
 			ImGui::TextUnformatted(m_Status.c_str());
 			if (ImGui::IsItemHovered())
 			{

@@ -21,7 +21,8 @@ namespace Aster
 	class CommandProcessor
 	{
 	  public:
-		explicit CommandProcessor(std::filesystem::path projectRoot, SimulationSettings simulationSettings = {});
+		explicit CommandProcessor(std::filesystem::path projectRoot, SimulationSettings simulationSettings = {},
+								  bool allowStartupRepair = false);
 		nlohmann::json Execute(const nlohmann::json& request);
 		void UpdateSimulation(double deltaTime);
 		void SetInput(const InputSnapshot& input);
@@ -42,6 +43,10 @@ namespace Aster
 		{
 			return m_ScenePath;
 		}
+		[[nodiscard]] const std::optional<std::string>& GetStartupError() const noexcept
+		{
+			return m_StartupError;
+		}
 		[[nodiscard]] bool HasUnsavedChanges() const;
 		void EnableRecovery();
 		[[nodiscard]] std::optional<std::string> UpdateRecovery(bool force = false);
@@ -55,7 +60,7 @@ namespace Aster
 		std::filesystem::path ResolvePath(const std::string& relativePath) const;
 		void RequireEditing() const;
 		void RequireDocumentChange(const nlohmann::json& request) const;
-		void OpenProject(Project project);
+		void OpenProject(Project project, bool allowStartupRepair = false);
 		nlohmann::json ConfigureProject(const nlohmann::json& request);
 		void RecordChange(const nlohmann::json& before);
 		void CheckpointRecovery();
@@ -68,6 +73,7 @@ namespace Aster
 		SceneDocumentFile m_DocumentFile;
 		bool m_IsClosed = false;
 		std::optional<Project> m_Project;
+		std::optional<std::string> m_StartupError;
 		std::optional<std::string> m_ScenePath;
 		nlohmann::json m_SavedScene;
 		std::vector<nlohmann::json> m_Undo;

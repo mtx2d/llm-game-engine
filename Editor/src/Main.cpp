@@ -166,13 +166,14 @@ int main(int argc, char** argv)
 				throw std::invalid_argument("Unknown argument: " + argument);
 			}
 		}
-		Aster::CommandProcessor processor(project, simulationSettings);
+		Aster::CommandProcessor processor(project, simulationSettings, maximumFrames == 0 && !startPlaying);
 		project = processor.GetAssetRoot();
 		if (!scenePath && processor.GetScenePath())
 		{
 			scenePath = *processor.GetScenePath();
 		}
-		if (!scenePath && std::filesystem::is_regular_file(project / "Scenes/FeatureGallery.aster"))
+		if (!scenePath && !processor.GetStartupError() &&
+			std::filesystem::is_regular_file(project / "Scenes/FeatureGallery.aster"))
 		{
 			scenePath = "Scenes/FeatureGallery.aster";
 		}

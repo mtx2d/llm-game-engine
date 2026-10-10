@@ -148,6 +148,48 @@ def main():
         run([runtime, "--project", config_project, "--steps", 0, "--output", configured_output])
         assert json.loads(configured_output.read_text()) == alternate_scene
 
+        repair_root = root / "Repair startup workflow"
+        run([editor, "--create-project", repair_root, "Repair workflow"])
+        repair_project = repair_root / "Project.asterproj"
+        repair_assets = repair_root / "Assets"
+        bad_startup = repair_assets / "Scenes/Main.aster"
+        with AutomationEditor(editor, repair_project) as before_crash:
+            before_crash.get("entity.create", name="Recover across corrupt startup")
+            pending_repair = before_crash.get("scene.get")
+            before_crash.get("recovery.checkpoint")
+            repair_session = before_crash.get("recovery.list")[0]["id"]
+            before_crash.kill()
+        bad_startup.write_bytes(b"Corrupt startup must be preserved")
+        unchanged_manifest = repair_project.read_bytes()
+        run([runtime, "--project", repair_project, "--steps", 0], expected=1)
+        run([editor, "--automation", repair_project], expected=1)
+        with AutomationEditor(editor, repair_assets) as repairing:
+            rejected = repairing.request("project.open", path=str(repair_project), repairStartup="true")
+            assert not rejected["ok"] and repairing.get("project.get")["path"] is None
+            opened = repairing.get("project.open", path=str(repair_project), repairStartup=True)
+            assert opened["warning"] and repairing.get("project.get")["startupError"]
+            assert repairing.get("scene.status")["path"] is None and not repairing.get("scene.status")["dirty"]
+            assert not repairing.request("simulation.start", audio="offline")["ok"]
+            assert not repairing.request("project.export")["ok"]
+            adopted = repairing.get("recovery.restore", session=repair_session)
+            assert adopted["path"] is None and adopted["warning"]
+            assert repairing.get("scene.get") == pending_repair
+            assert not repairing.request("scene.save", path="Scenes/Main.aster")["ok"]
+            assert bad_startup.read_bytes() == b"Corrupt startup must be preserved"
+            assert repair_project.read_bytes() == unchanged_manifest
+            repairing.get("scene.save", path="Scenes/Recovered.aster")
+            repair_config = repairing.get("project.get")["config"]
+            repair_config["StartScene"] = "Scenes/Recovered.aster"
+            assert repairing.get("project.configure", config=repair_config)["documentChanged"]
+            assert repairing.get("project.get")["startupError"] is None
+            assert repairing.get("scene.get") == pending_repair
+            repairing.get("simulation.start", audio="offline")
+            repairing.get("simulation.stop")
+        repaired_output = root / "RepairedRuntime.aster"
+        run([runtime, "--project", repair_project, "--steps", 0, "--output", repaired_output])
+        assert json.loads(repaired_output.read_text()) == pending_repair
+        assert bad_startup.read_bytes() == b"Corrupt startup must be preserved"
+
         (source / "Assets/Scripts").mkdir()
         (source / "Assets/Scripts/Actor.lua").write_text(
             'return {OnCreate=function(self, entity) '

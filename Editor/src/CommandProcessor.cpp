@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <new>
 #include <stdexcept>
 #include <string>
 
@@ -40,13 +41,15 @@ namespace Aster
 		}
 	} // namespace
 
-	CommandProcessor::CommandProcessor(std::filesystem::path projectRoot, SimulationSettings simulationSettings)
+	CommandProcessor::CommandProcessor(std::filesystem::path projectRoot, SimulationSettings simulationSettings,
+									   bool allowStartupRepair)
 		: m_ProjectRoot(std::move(projectRoot)), m_SimulationSettings(simulationSettings)
 	{
 		m_SavedScene = m_Scene.Serialize();
 		if (m_ProjectRoot.extension() == ".asterproj" || std::filesystem::is_regular_file(m_ProjectRoot))
 		{
-			OpenProject(Project::Load(m_ProjectRoot));
+			OpenProject(allowStartupRepair ? Project::LoadForRepair(m_ProjectRoot) : Project::Load(m_ProjectRoot),
+						allowStartupRepair);
 			return;
 		}
 		m_ProjectRoot = std::filesystem::weakly_canonical(m_ProjectRoot);
@@ -184,12 +187,34 @@ namespace Aster
 		}
 	}
 
-	void CommandProcessor::OpenProject(Project project)
+	void CommandProcessor::OpenProject(Project project, bool allowStartupRepair)
 	{
 		SceneDocumentFile file;
-		auto scene = file.Load(project.ResolveAssetPath(project.GetConfig().StartScene));
+		Scene scene("Startup repair");
+		std::optional<std::string> scenePath;
+		std::optional<std::string> startupError;
+		try
+		{
+			scene = file.Load(project.ResolveAssetPath(project.GetConfig().StartScene));
+		}
+		catch (const std::bad_alloc&)
+		{
+			throw;
+		}
+		catch (const std::exception& error)
+		{
+			if (!allowStartupRepair)
+			{
+				throw;
+			}
+			file = SceneDocumentFile{};
+			startupError = "Startup scene needs repair: " + std::string(error.what());
+		}
+		if (!startupError)
+		{
+			scenePath = project.GetConfig().StartScene.generic_string();
+		}
 		auto saved = scene.Serialize();
-		auto scenePath = project.GetConfig().StartScene.generic_string();
 		auto assetRoot = project.GetAssetDirectory();
 		auto recovery = m_Recovery ? std::make_unique<RecoveryStore>(assetRoot) : nullptr;
 		if (m_Recovery)
@@ -198,6 +223,7 @@ namespace Aster
 		}
 		// All filesystem operations, validation and allocations precede publication.
 		m_Project = std::move(project);
+		m_StartupError = std::move(startupError);
 		m_ProjectRoot = std::move(assetRoot);
 		m_Scene = std::move(scene);
 		m_DocumentFile = std::move(file);
@@ -230,7 +256,7 @@ namespace Aster
 		}
 		auto config = Project::DeserializeConfig(request.at("config"));
 		auto project = m_Project->PreviewConfig(config);
-		if (project.GetAssetDirectory() == m_ProjectRoot)
+		if (project.GetAssetDirectory() == m_ProjectRoot && !m_StartupError)
 		{
 			project.UpdateConfig(std::move(config));
 			m_Project = std::move(project);
@@ -249,6 +275,7 @@ namespace Aster
 		// precedes it; publication below only transfers already owned state.
 		auto previousRecovery = std::move(m_Recovery);
 		m_Project = std::move(project);
+		m_StartupError.reset();
 		m_ProjectRoot = std::move(assetRoot);
 		m_Scene = std::move(scene);
 		m_DocumentFile = std::move(file);
@@ -433,15 +460,24 @@ namespace Aster
 			return {{"path",
 					 m_Project ? nlohmann::json(m_Project->GetFilePath().generic_string()) : nlohmann::json(nullptr)},
 					{"assets", m_ProjectRoot.generic_string()},
-					{"config", m_Project ? m_Project->Serialize() : nlohmann::json(nullptr)}};
+					{"config", m_Project ? m_Project->Serialize() : nlohmann::json(nullptr)},
+					{"startupError", m_StartupError ? nlohmann::json(*m_StartupError) : nlohmann::json(nullptr)}};
 		}
 		if (command == "project.open" || command == "project.create")
 		{
 			RequireDocumentChange(request);
 			const auto path = request.at("path").get<std::string>();
-			OpenProject(command == "project.open" ? Project::Load(path)
-												  : Project::Create(path, request.at("name").get<std::string>()));
-			return {{"path", m_Project->GetFilePath().generic_string()}, {"assets", m_ProjectRoot.generic_string()}};
+			const bool repair = request.value("repairStartup", false);
+			if (repair && command != "project.open")
+			{
+				throw std::invalid_argument("Startup repair applies only to opening an existing project");
+			}
+			OpenProject(command == "project.open" ? (repair ? Project::LoadForRepair(path) : Project::Load(path))
+												  : Project::Create(path, request.at("name").get<std::string>()),
+						repair);
+			return {{"path", m_Project->GetFilePath().generic_string()},
+					{"assets", m_ProjectRoot.generic_string()},
+					{"warning", m_StartupError ? nlohmann::json(*m_StartupError) : nlohmann::json(nullptr)}};
 		}
 		if (command == "project.configure")
 		{
@@ -453,6 +489,10 @@ namespace Aster
 			if (m_EditTransaction || HasUnsavedChanges())
 			{
 				throw std::logic_error("Finish editing and save the scene before exporting");
+			}
+			if (m_StartupError)
+			{
+				throw std::logic_error("Repair the project startup scene before exporting");
 			}
 			ExportSettings settings;
 			m_DocumentFile.VerifyUnchanged();
@@ -555,6 +595,10 @@ namespace Aster
 		if (command == "simulation.start")
 		{
 			RequireEditing();
+			if (m_StartupError)
+			{
+				throw std::logic_error("Repair the project startup scene before starting simulation");
+			}
 			if (m_EditTransaction)
 			{
 				throw std::logic_error("Finish the current edit before starting simulation");
