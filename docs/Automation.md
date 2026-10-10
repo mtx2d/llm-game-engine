@@ -20,6 +20,9 @@ Closing standard input stops any active play session and runs its `OnDestroy` ca
 | `recovery.checkpoint` | none | Persist dirty authored content separately from scene files; reject unfinished edit groups; during play use the authoring snapshot; return `checkpointed: false` and clear the owned checkpoint when clean |
 | `recovery.restore` | `session`, optional boolean `discardChanges` | Adopt a validated inactive checkpoint, with isolated history and a durable owned copy; reject current unsaved work without explicit discard; return `restored`, nullable `path` and nullable `warning` |
 | `recovery.discard` | `session` | Explicitly delete an inactive checkpoint without changing the current scene; reject live ownership, escaping IDs and linked/foreign data |
+| `project.browse` | `path` | Return canonical `directory`, nullable `parent`, sorted `entries` (`name`, `path`, `directory`) and explicit `truncated`; bounded nonrecursive scan, no project opening |
+| `project.recent` | none | Return `enabled` and most-recent-first `projects`; enable with `--editor-state` |
+| `project.forget` | absolute stored `path` | Remove only a recent-project entry; require enabled history and preserve project files/current document |
 | `project.get` | none | Return active project path/configuration, resolved asset root and nullable `startupError`; configuration/path are null in legacy directory mode |
 | `project.open` | `path`, optional boolean `discardChanges`, optional boolean `repairStartup` | Open a validated project and startup; explicit repair permits unavailable startup contents, reports nullable `warning` and opens an untitled repair workspace on startup failure; preserve active project on failure |
 | `project.create` | `path`, `name`, optional `discardChanges` | Create a complete project in an absent directory and open it |
@@ -59,3 +62,5 @@ Scenes use version 1 with `Name` and `Entities`. Each entity has `ID`, `Name`, `
 {"command":"simulation.step","steps":1}
 {"command":"simulation.stop"}
 ```
+
+Automation can share recent-project state with the GUI using `AsterEditor --automation /path/to/Assets --editor-state /existing/writable/directory`. Ordinary automation has history disabled. History failures are explicit; a successful `project.open`/`project.create` can return a history-persistence `warning` while the project remains adopted. See [Projects.md](Projects.md#graphical-project-controls) for persistence, lock and directory-scan limits.

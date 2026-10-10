@@ -66,7 +66,8 @@ target_compile_definitions(Aster PRIVATE GLM_ENABLE_EXPERIMENTAL)
 aster_target(Aster)
 
 add_library(AsterEditorCommands STATIC Editor/src/CommandProcessor.cpp Editor/src/ProjectExporter.cpp
-  Editor/src/SceneDocumentFile.cpp Editor/src/EditorStorage.cpp Editor/src/RecoveryStore.cpp)
+  Editor/src/SceneDocumentFile.cpp Editor/src/EditorStorage.cpp Editor/src/RecoveryStore.cpp
+  Editor/src/ProjectHistory.cpp)
 target_include_directories(AsterEditorCommands PUBLIC Editor/include)
 target_link_libraries(AsterEditorCommands PUBLIC Aster)
 aster_target(AsterEditorCommands)
@@ -246,7 +247,10 @@ if(ASTER_BUILD_TESTS)
       add_test(NAME NativeProject COMMAND "${Python3_EXECUTABLE}" "${asterNativeEditorTest}"
         --projects-only --editor "$<TARGET_FILE:AsterEditor>" --assets "${CMAKE_CURRENT_SOURCE_DIR}/Assets"
         --artifacts "${CMAKE_CURRENT_BINARY_DIR}/native-project-evidence")
-      set_tests_properties(NativeProject PROPERTIES TIMEOUT 300 LABELS "gpu;gui;input;project")
+      # Includes folder navigation, a separate launcher restart and two repair
+      # launches. macOS deliberately paces native key/button edges; individual
+      # helper acknowledgments and presented-state predicates retain their bounds.
+      set_tests_properties(NativeProject PROPERTIES TIMEOUT 450 LABELS "gpu;gui;input;project")
     endif()
     if(ASTER_BUILD_GUI AND UNIX AND NOT APPLE)
       find_program(ASTER_XVFB_RUN xvfb-run)

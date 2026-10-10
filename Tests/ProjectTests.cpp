@@ -610,6 +610,115 @@ namespace
 				"Repair never bypasses unsupported configuration versions");
 	}
 
+	void TestProjectHistory(const std::filesystem::path& root)
+	{
+		const auto state = root / "Editor state";
+		std::filesystem::create_directory(state);
+		Aster::ProjectHistory first(state);
+		Aster::ProjectHistory second(state);
+		Check(first.List().empty(), "New editor history starts empty");
+		const auto one = root / "First.asterproj";
+		const auto two = root / "Second.asterproj";
+		first.Remember(one);
+		second.Remember(two);
+		Check(first.List() == std::vector<std::filesystem::path>{two, one},
+			  "Separate history owners merge latest disk state instead of overwriting it");
+		first.Remember(one);
+		Check(second.List() == std::vector<std::filesystem::path>{one, two},
+			  "Reopening moves a recent project to the front without duplicates");
+		first.Forget(one);
+		Check(second.List() == std::vector<std::filesystem::path>{two}, "Forget persists without opening a project");
+		for (int index = 0; index < 20; ++index)
+		{
+			first.Remember(root / ("Recent" + std::to_string(index) + ".asterproj"));
+		}
+		Check(second.List().size() == 16 && second.List().front().filename() == "Recent19.asterproj" &&
+				  second.List().back().filename() == "Recent4.asterproj",
+			  "History retains the newest sixteen paths");
+		const auto historyFile = state / ".aster/Projects.json";
+		const auto baseline = Aster::ReadTextFile(historyFile, 128 * 1024);
+		{
+			const auto lock = Aster::FileLock::TryAcquire(state / ".aster/Projects.lock");
+			Check(lock != nullptr, "Own history lock for contention test");
+			Rejects([&] { first.Remember(one); }, "History rejects native lock contention");
+			Check(Aster::ReadTextFile(historyFile, 128 * 1024) == baseline, "Contention preserves persisted history");
+		}
+		Rejects([&] { first.Remember("Relative.asterproj"); }, "History rejects relative paths");
+		Rejects([&] { first.Remember(root / "Wrong.txt"); }, "History rejects non-project paths");
+		for (const auto& invalid : std::vector<std::string>{
+				 "{\"Version\":1,\"Version\":1,\"Projects\":[]}",
+				 nlohmann::json({{"Version", 2}, {"Projects", nlohmann::json::array()}}).dump(),
+				 nlohmann::json({{"Version", 1}, {"Projects", {one.generic_string(), one.generic_string()}}}).dump(),
+				 nlohmann::json({{"Version", 1}, {"Projects", {"../Escape.asterproj"}}}).dump(),
+				 std::string(128 * 1024 + 1, ' ')})
+		{
+			Aster::WriteTextFileAtomically(historyFile, invalid);
+			Rejects([&] { (void)first.List(); }, "Malformed/oversized history is rejected");
+			Rejects([&] { first.Remember(two); }, "Malformed history cannot be silently overwritten");
+			Check(Aster::ReadTextFile(historyFile, 256 * 1024) == invalid, "Rejected update preserves invalid history");
+		}
+		Aster::WriteTextFileAtomically(historyFile, baseline);
+		const auto project = Aster::Project::Create(root / "Recent project", "Recent");
+		Aster::CommandProcessor editor(project.GetAssetDirectory());
+		editor.EnableProjectHistory(state);
+		Check(editor.Execute({{"command", "project.recent"}}).at("result").at("enabled"),
+			  "Automation can inspect the owned project history");
+		Aster::WriteTextFileAtomically(historyFile, "Invalid history preserved");
+		const auto opened =
+			editor.Execute({{"command", "project.open"}, {"path", project.GetFilePath().generic_string()}});
+		Check(opened.at("ok") && opened.at("result").at("warning").is_string() &&
+				  editor.GetScenePath() == "Scenes/Main.aster" && !editor.GetStartupError(),
+			  "History persistence failure reports a warning without undoing a successful open");
+		Check(Aster::ReadTextFile(historyFile, 128 * 1024) == "Invalid history preserved",
+			  "Open preserves damaged history");
+		Aster::WriteTextFileAtomically(historyFile, baseline);
+		const auto rejected =
+			editor.Execute({{"command", "project.open"}, {"path", (root / "Missing.asterproj").generic_string()}});
+		Check(!rejected.at("ok").get<bool>() && Aster::ReadTextFile(historyFile, 128 * 1024) == baseline,
+			  "Rejected project opening does not add history entries");
+		Check(editor.Execute({{"command", "project.forget"}, {"path", two.generic_string()}}).at("ok"),
+			  "Shared forget command accepts a previously stored location");
+	}
+
+	void TestProjectBrowser(const std::filesystem::path& root)
+	{
+		const auto directory = root / "Browser";
+		std::filesystem::create_directories(directory / "ZFolder");
+		std::filesystem::create_directory(directory / "AFolder");
+		std::filesystem::create_directory(directory / ".aStEr");
+		Aster::WriteTextFileAtomically(directory / "B.asterproj", "Not opened by browsing");
+		Aster::WriteTextFileAtomically(directory / "A.asterproj", "Not opened by browsing");
+		Aster::WriteTextFileAtomically(directory / "Ignored.txt", "Not a project");
+		std::error_code linkError;
+		std::filesystem::create_symlink(directory / "A.asterproj", directory / "Linked.asterproj", linkError);
+		const auto snapshot = Aster::BrowseProjects(directory);
+		Check(snapshot.at("directory") == directory.generic_string() &&
+				  snapshot.at("parent") == root.generic_string() && !snapshot.at("truncated").get<bool>() &&
+				  snapshot.at("entries").size() == 4,
+			  "Browser returns only project files and nonprivate directories without following links");
+		Check(snapshot.at("entries")[0].at("name") == "AFolder" && snapshot.at("entries")[1].at("name") == "ZFolder" &&
+				  snapshot.at("entries")[2].at("name") == "A.asterproj" &&
+				  snapshot.at("entries")[3].at("name") == "B.asterproj",
+			  "Browser lists directories first and sorts within each kind");
+		Check(Aster::BrowseProjects(root.root_path()).at("parent").is_null(),
+			  "Filesystem root has no parent navigation");
+		Rejects([&] { (void)Aster::BrowseProjects(directory / "Ignored.txt"); }, "Browser rejects nondirectories");
+		Rejects([&] { (void)Aster::BrowseProjects(directory / "Missing"); }, "Browser reports missing directories");
+		const auto large = root / "Bounded browser";
+		std::filesystem::create_directory(large);
+		for (int index = 0; index < 4097; ++index)
+		{
+			std::ofstream(large / (std::to_string(index) + ".txt"));
+		}
+		const auto limited = Aster::BrowseProjects(large);
+		Check(limited.at("truncated").get<bool>() && limited.at("entries").empty(),
+			  "Scan budget counts ignored entries and explicitly reports truncation");
+		Aster::CommandProcessor editor(directory);
+		Check(editor.Execute({{"command", "project.browse"}, {"path", directory.generic_string()}}).at("result") ==
+				  snapshot,
+			  "GUI and automation share the same bounded browser snapshot");
+	}
+
 	void TestSaveConflicts(const std::filesystem::path& root)
 	{
 		const auto project = Aster::Project::Create(root / "Conflicts", "Conflicts");
@@ -856,6 +965,8 @@ void RunProjectTests()
 	TestConfigurationConflicts(directory.Path);
 	TestConfigureCommand(directory.Path);
 	TestStartupRepair(directory.Path);
+	TestProjectHistory(directory.Path);
+	TestProjectBrowser(directory.Path);
 	TestDocumentLifecycle(directory.Path);
 	TestSaveConflicts(directory.Path);
 	TestSessionClose(directory.Path);

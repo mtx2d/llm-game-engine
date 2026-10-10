@@ -187,6 +187,31 @@ namespace Aster
 		}
 	}
 
+	void CommandProcessor::EnableProjectHistory(const std::filesystem::path& stateDirectory)
+	{
+		m_ProjectHistory = std::make_unique<ProjectHistory>(stateDirectory);
+		if (const auto error = RememberProject())
+		{
+			throw std::runtime_error(*error);
+		}
+	}
+
+	std::optional<std::string> CommandProcessor::RememberProject()
+	{
+		if (m_ProjectHistory && m_Project)
+		{
+			try
+			{
+				m_ProjectHistory->Remember(m_Project->GetFilePath());
+			}
+			catch (const std::exception& error)
+			{
+				return "Project opened; recent-project history could not be updated: " + std::string(error.what());
+			}
+		}
+		return std::nullopt;
+	}
+
 	void CommandProcessor::OpenProject(Project project, bool allowStartupRepair)
 	{
 		SceneDocumentFile file;
@@ -409,14 +434,14 @@ namespace Aster
 		const std::string command = request.at("command").get<std::string>();
 		if (command == "help")
 		{
-			return {"scene.get",		 "scene.new",		 "scene.replace",	 "scene.load",
-					"scene.save",		 "entity.create",	 "entity.destroy",	 "entity.parent",
-					"entity.patch",		 "prefab.spawn",	 "history.undo",	 "history.redo",
-					"history.begin",	 "history.commit",	 "history.cancel",	 "simulation.start",
-					"simulation.step",	 "simulation.stop",	 "input.set",		 "project.export",
-					"scene.environment", "scene.status",	 "project.get",		 "project.open",
-					"project.create",	 "session.close",	 "recovery.list",	 "recovery.checkpoint",
-					"recovery.restore",	 "recovery.discard", "project.configure"};
+			return {
+				"scene.get",		 "scene.new",		"scene.replace",	   "scene.load",	   "scene.save",
+				"entity.create",	 "entity.destroy",	"entity.parent",	   "entity.patch",	   "prefab.spawn",
+				"history.undo",		 "history.redo",	"history.begin",	   "history.commit",   "history.cancel",
+				"simulation.start",	 "simulation.step", "simulation.stop",	   "input.set",		   "project.export",
+				"scene.environment", "scene.status",	"project.get",		   "project.open",	   "project.create",
+				"session.close",	 "recovery.list",	"recovery.checkpoint", "recovery.restore", "recovery.discard",
+				"project.configure", "project.browse",	"project.recent",	   "project.forget"};
 		}
 		if (command == "recovery.list")
 		{
@@ -455,6 +480,31 @@ namespace Aster
 					{"editing", m_EditTransaction.has_value()},
 					{"playing", IsPlaying()}};
 		}
+		if (command == "project.browse")
+		{
+			return BrowseProjects(request.at("path").get<std::string>());
+		}
+		if (command == "project.recent")
+		{
+			auto paths = nlohmann::json::array();
+			if (m_ProjectHistory)
+			{
+				for (const auto& path : m_ProjectHistory->List())
+				{
+					paths.push_back(path.generic_string());
+				}
+			}
+			return {{"enabled", m_ProjectHistory != nullptr}, {"projects", paths}};
+		}
+		if (command == "project.forget")
+		{
+			if (!m_ProjectHistory)
+			{
+				throw std::logic_error("Enable editor history before removing recent projects");
+			}
+			m_ProjectHistory->Forget(request.at("path").get<std::string>());
+			return {{"forgotten", true}};
+		}
 		if (command == "project.get")
 		{
 			return {{"path",
@@ -475,9 +525,14 @@ namespace Aster
 			OpenProject(command == "project.open" ? (repair ? Project::LoadForRepair(path) : Project::Load(path))
 												  : Project::Create(path, request.at("name").get<std::string>()),
 						repair);
+			auto warning = m_StartupError;
+			if (const auto historyError = RememberProject())
+			{
+				warning = warning ? *warning + "\n" + *historyError : *historyError;
+			}
 			return {{"path", m_Project->GetFilePath().generic_string()},
 					{"assets", m_ProjectRoot.generic_string()},
-					{"warning", m_StartupError ? nlohmann::json(*m_StartupError) : nlohmann::json(nullptr)}};
+					{"warning", warning ? nlohmann::json(*warning) : nlohmann::json(nullptr)}};
 		}
 		if (command == "project.configure")
 		{

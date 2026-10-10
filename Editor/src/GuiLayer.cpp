@@ -292,6 +292,8 @@ namespace Aster
 			}
 			DrawExport();
 			DrawProjects();
+			DrawProjectLauncher();
+			DrawProjectBrowser();
 			DrawDocumentChange();
 			if (const auto warning = m_Commands.UpdateRecovery())
 			{
@@ -321,6 +323,26 @@ namespace Aster
 		void SetStatus(std::string status)
 		{
 			m_Status = std::move(status);
+		}
+
+		void ShowProjectLauncher()
+		{
+			const auto response = m_Commands.Execute({{"command", "project.recent"}});
+			m_RecentProjects = Json::array();
+			m_LauncherError.clear();
+			if (response.value("ok", false))
+			{
+				m_RecentProjects = response.at("result").at("projects");
+				if (!response.at("result").at("enabled").get<bool>())
+				{
+					m_LauncherError = "Recent-project history is unavailable for this session.";
+				}
+			}
+			else
+			{
+				m_LauncherError = response.at("error").get<std::string>();
+			}
+			m_ShowLauncher = true;
 		}
 
 	  private:
@@ -650,6 +672,11 @@ namespace Aster
 				ImGui::BeginDisabled(m_Commands.IsPlaying());
 				ImGui::SetCursorPos({12, 36});
 				ImGui::TextUnformatted("Open a project file");
+				ImGui::SetCursorPos({330, 32});
+				if (ImGui::Button("Browse..."))
+				{
+					StartProjectBrowser(false);
+				}
 				ImGui::SetCursorPos({430, 32});
 				if (ImGui::Button("Open for repair"))
 				{
@@ -667,6 +694,11 @@ namespace Aster
 				ImGui::Separator();
 				ImGui::SetCursorPos({12, 96});
 				ImGui::TextUnformatted("Create in a new directory (its parent must exist)");
+				ImGui::SetCursorPos({490, 88});
+				if (ImGui::Button("Choose parent"))
+				{
+					StartProjectBrowser(true);
+				}
 				ImGui::SetCursorPos({12, 116});
 				ImGui::SetNextItemWidth(490);
 				ImGui::InputText("Directory", m_NewProjectDirectory.data(), m_NewProjectDirectory.size());
@@ -722,6 +754,230 @@ namespace Aster
 				{
 					ImGui::TextDisabled("Open or create a project to configure it.");
 				}
+				ImGui::SetCursorPos({12, 388});
+				if (ImGui::Button("Recent projects"))
+				{
+					ShowProjectLauncher();
+				}
+				ImGui::EndDisabled();
+			}
+			ImGui::End();
+		}
+
+		void RefreshProjectBrowser(const std::string& directory)
+		{
+			const auto response = m_Commands.Execute({{"command", "project.browse"}, {"path", directory}});
+			if (!response.value("ok", false))
+			{
+				m_BrowserError = "Could not change directory: " + response.at("error").get<std::string>();
+				return;
+			}
+			m_ProjectBrowser = response.at("result");
+			SetText(m_BrowserDirectory, m_ProjectBrowser.at("directory").get<std::string>());
+			m_BrowserSelection.clear();
+			m_BrowserError.clear();
+		}
+
+		void StartProjectBrowser(bool chooseParent)
+		{
+			m_BrowserChooseParent = chooseParent;
+			m_ProjectBrowser = Json::object();
+			m_BrowserSelection.clear();
+			m_BrowserError.clear();
+			RefreshProjectBrowser(m_ProjectRoot.parent_path().generic_string());
+			m_ShowProjectBrowser = true;
+		}
+
+		void DrawProjectBrowser()
+		{
+			if (!m_ShowProjectBrowser)
+			{
+				return;
+			}
+			const auto display = ImGui::GetIO().DisplaySize;
+			ImGui::SetNextWindowPos({display.x / 2, display.y / 2}, ImGuiCond_Appearing, {0.5f, 0.5f});
+			ImGui::SetNextWindowSize({680, 460});
+			if (ImGui::Begin("Choose project", &m_ShowProjectBrowser,
+							 ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove))
+			{
+				ImGui::BeginDisabled(m_Commands.IsPlaying());
+				ImGui::SetCursorPos({12, 32});
+				ImGui::SetNextItemWidth(500);
+				const bool enter = ImGui::InputText("##browser-directory", m_BrowserDirectory.data(),
+													m_BrowserDirectory.size(), ImGuiInputTextFlags_EnterReturnsTrue);
+				ImGui::SameLine();
+				if (ImGui::Button("Go", {60, 0}) || enter)
+				{
+					RefreshProjectBrowser(m_BrowserDirectory.data());
+				}
+				ImGui::SameLine();
+				ImGui::BeginDisabled(m_ProjectBrowser.empty() || m_ProjectBrowser.at("parent").is_null());
+				if (ImGui::Button("Up", {60, 0}))
+				{
+					RefreshProjectBrowser(m_ProjectBrowser.at("parent").get<std::string>());
+				}
+				ImGui::EndDisabled();
+				ImGui::SetCursorPos({12, 64});
+				ImGui::TextUnformatted(m_BrowserChooseParent ? "Choose the parent for a new project directory."
+															 : "Select an .asterproj file. Click folders to navigate.");
+				ImGui::SetCursorPos({12, 90});
+				std::optional<std::string> nextDirectory;
+				if (ImGui::BeginChild("Project entries", {656, 270}, true))
+				{
+					if (!m_ProjectBrowser.empty())
+					{
+						int index = 0;
+						for (const auto& entry : m_ProjectBrowser.at("entries"))
+						{
+							const auto path = entry.at("path").get<std::string>();
+							const bool directory = entry.at("directory").get<bool>();
+							ImGui::PushID(index++);
+							ImGui::BeginDisabled(!directory && m_BrowserChooseParent);
+							const auto labelPosition = ImGui::GetCursorScreenPos();
+							if (ImGui::Selectable("##entry", path == m_BrowserSelection, 0, {0, 24}))
+							{
+								if (directory)
+								{
+									nextDirectory = path;
+								}
+								else
+								{
+									m_BrowserSelection = path;
+								}
+							}
+							const auto label =
+								(directory ? "Folder: " : "Project: ") + entry.at("name").get<std::string>();
+							ImGui::GetWindowDrawList()->AddText(labelPosition, ImGui::GetColorU32(ImGuiCol_Text),
+																label.c_str());
+							ImGui::EndDisabled();
+							ImGui::PopID();
+						}
+					}
+				}
+				ImGui::EndChild();
+				if (nextDirectory)
+				{
+					RefreshProjectBrowser(*nextDirectory);
+				}
+				ImGui::SetCursorPos({12, 372});
+				ImGui::BeginDisabled(m_ProjectBrowser.empty() ||
+									 (!m_BrowserChooseParent && m_BrowserSelection.empty()));
+				if (ImGui::Button(m_BrowserChooseParent ? "Use parent directory" : "Open selected project", {190, 26}))
+				{
+					if (m_BrowserChooseParent)
+					{
+						const auto destination =
+							(std::filesystem::path(m_ProjectBrowser.at("directory").get<std::string>()) / "NewGame")
+								.generic_string();
+						if (destination.size() >= m_NewProjectDirectory.size())
+						{
+							m_BrowserError = "New project directory exceeds the 4095-byte input limit.";
+						}
+						else
+						{
+							SetText(m_NewProjectDirectory, destination);
+							m_ShowProjectBrowser = false;
+						}
+					}
+					else
+					{
+						RequestDocumentChange(
+							{{"command", "project.open"}, {"path", m_BrowserSelection}, {"repairStartup", true}});
+						m_ShowProjectBrowser = false;
+					}
+				}
+				ImGui::EndDisabled();
+				ImGui::SameLine();
+				if (ImGui::Button("Cancel", {100, 26}))
+				{
+					m_ShowProjectBrowser = false;
+				}
+				if (!m_ProjectBrowser.empty() && m_ProjectBrowser.at("truncated").get<bool>())
+				{
+					ImGui::TextWrapped(
+						"Directory scan limited to 4096 entries. Enter a more specific directory above.");
+				}
+				ImGui::TextWrapped("%s", m_BrowserError.c_str());
+				ImGui::EndDisabled();
+			}
+			ImGui::End();
+		}
+
+		void DrawProjectLauncher()
+		{
+			if (!m_ShowLauncher)
+			{
+				return;
+			}
+			const auto display = ImGui::GetIO().DisplaySize;
+			ImGui::SetNextWindowPos({display.x / 2, display.y / 2}, ImGuiCond_Appearing, {0.5f, 0.5f});
+			ImGui::SetNextWindowSize({680, 420});
+			if (ImGui::Begin("Aster projects", &m_ShowLauncher, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove))
+			{
+				ImGui::BeginDisabled(m_Commands.IsPlaying());
+				ImGui::SetCursorPos({12, 32});
+				if (ImGui::Button("Browse projects", {180, 26}))
+				{
+					m_ShowLauncher = false;
+					StartProjectBrowser(false);
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("Create project", {180, 26}))
+				{
+					RefreshProjectFields();
+					m_ShowProjects = true;
+					m_ShowLauncher = false;
+				}
+				ImGui::SetCursorPos({12, 64});
+				ImGui::TextUnformatted("Recent projects (select a path to open)");
+				std::optional<std::string> forgotten;
+				std::optional<std::string> opened;
+				ImGui::SetCursorPos({12, 90});
+				if (ImGui::BeginChild("Recent entries", {656, 270}, true))
+				{
+					int index = 0;
+					for (const auto& entry : m_RecentProjects)
+					{
+						const auto path = entry.get<std::string>();
+						ImGui::PushID(index++);
+						if (ImGui::SmallButton("Forget"))
+						{
+							forgotten = path;
+						}
+						ImGui::SameLine();
+						const auto labelPosition = ImGui::GetCursorScreenPos();
+						if (ImGui::Selectable("##recent", false, 0, {0, 24}))
+						{
+							opened = path;
+						}
+						ImGui::GetWindowDrawList()->AddText(labelPosition, ImGui::GetColorU32(ImGuiCol_Text),
+															path.c_str());
+						if (ImGui::IsItemHovered())
+						{
+							ImGui::SetTooltip("%s", path.c_str());
+						}
+						ImGui::PopID();
+					}
+					if (m_RecentProjects.empty())
+					{
+						ImGui::TextUnformatted("No recent projects yet. Browse or create a project.");
+					}
+				}
+				ImGui::EndChild();
+				if (forgotten)
+				{
+					const auto result = Execute({{"command", "project.forget"}, {"path", *forgotten}});
+					if (result.value("ok", false))
+					{
+						ShowProjectLauncher();
+					}
+				}
+				if (opened)
+				{
+					m_ShowLauncher = false;
+					RequestDocumentChange({{"command", "project.open"}, {"path", *opened}, {"repairStartup", true}});
+				}
+				ImGui::TextWrapped("%s", m_LauncherError.c_str());
 				ImGui::EndDisabled();
 			}
 			ImGui::End();
@@ -1613,6 +1869,15 @@ namespace Aster
 		std::array<char, 4096> m_ProjectAssets{};
 		std::array<char, 4096> m_ProjectStartup{};
 		bool m_ShowProjects = false;
+		bool m_ShowProjectBrowser = false;
+		bool m_BrowserChooseParent = false;
+		bool m_ShowLauncher = false;
+		std::array<char, 4096> m_BrowserDirectory{};
+		std::string m_BrowserSelection;
+		std::string m_BrowserError;
+		std::string m_LauncherError;
+		Json m_ProjectBrowser = Json::object();
+		Json m_RecentProjects = Json::array();
 		bool m_HasProject = false;
 		std::map<std::string, std::array<char, 4096>> m_TextBuffers;
 		std::string m_Status = "Ready";
@@ -1652,5 +1917,9 @@ namespace Aster
 	void GuiLayer::SetStatus(std::string status)
 	{
 		m_Impl->SetStatus(std::move(status));
+	}
+	void GuiLayer::ShowProjectLauncher()
+	{
+		m_Impl->ShowProjectLauncher();
 	}
 } // namespace Aster

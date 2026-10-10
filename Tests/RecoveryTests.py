@@ -12,8 +12,11 @@ import threading
 
 
 class Editor:
-    def __init__(self, executable, project):
-        self.process = subprocess.Popen([str(executable), "--automation", str(project)], text=True,
+    def __init__(self, executable, project, editor_state=None):
+        arguments = [str(executable), "--automation", str(project)]
+        if editor_state is not None:
+            arguments.extend(["--editor-state", str(editor_state)])
+        self.process = subprocess.Popen(arguments, text=True,
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.lines = queue.Queue()
         self.reader = threading.Thread(target=self.read, daemon=True)

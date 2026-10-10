@@ -34,9 +34,14 @@ namespace
 		}
 	}
 
-	int RunAutomation(const std::filesystem::path& project)
+	int RunAutomation(const std::filesystem::path& project,
+					  const std::optional<std::filesystem::path>& editorState = std::nullopt)
 	{
 		Aster::CommandProcessor processor(project);
+		if (editorState)
+		{
+			processor.EnableProjectHistory(*editorState);
+		}
 		processor.EnableRecovery();
 		std::string line;
 		while (!processor.IsClosed() && std::getline(std::cin, line))
@@ -81,6 +86,10 @@ int main(int argc, char** argv)
 		{
 			return RunAutomation(argv[2]);
 		}
+		if (argc == 5 && std::string(argv[1]) == "--automation" && std::string(argv[3]) == "--editor-state")
+		{
+			return RunAutomation(argv[2], std::filesystem::path(argv[4]));
+		}
 		if (argc == 4 && std::string(argv[1]) == "--create-project")
 		{
 			const auto project = Aster::Project::Create(argv[2], argv[3]);
@@ -89,11 +98,12 @@ int main(int argc, char** argv)
 		}
 		if (argc == 2 && std::string(argv[1]) == "--help")
 		{
-			std::cout << "AsterEditor --automation <asset-directory|project.asterproj>\n"
+			std::cout << "AsterEditor --automation <asset-directory|project.asterproj> [--editor-state <directory>]\n"
 					  << "AsterEditor --create-project <new-directory> <name>\n"
 					  << "AsterEditor [--project <asset-directory|project.asterproj>] [--scene <relative-scene>] "
 						 "[--frames N] "
-						 "[--screenshot <image.ppm>] [--audio device|offline|disabled] [--play]\n";
+						 "[--screenshot <image.ppm>] [--audio device|offline|disabled] [--play] "
+						 "[--launcher] [--editor-state <directory>]\n";
 			return 0;
 		}
 #ifdef ASTER_HAS_RENDERER
@@ -104,6 +114,10 @@ int main(int argc, char** argv)
 		}
 		std::optional<std::filesystem::path> scenePath;
 		std::filesystem::path screenshot;
+		std::filesystem::path editorState = std::filesystem::current_path();
+		bool explicitEditorState = false;
+		bool explicitProject = false;
+		bool showLauncher = false;
 		int maximumFrames = 0;
 		bool startPlaying = false;
 		Aster::SimulationSettings simulationSettings;
@@ -111,6 +125,11 @@ int main(int argc, char** argv)
 		for (int index = 1; index < argc; ++index)
 		{
 			const std::string argument = argv[index];
+			if (argument == "--launcher")
+			{
+				showLauncher = true;
+				continue;
+			}
 			if (argument == "--play")
 			{
 				startPlaying = true;
@@ -124,6 +143,12 @@ int main(int argc, char** argv)
 			if (argument == "--project")
 			{
 				project = value;
+				explicitProject = true;
+			}
+			else if (argument == "--editor-state")
+			{
+				editorState = value;
+				explicitEditorState = true;
 			}
 			else if (argument == "--scene")
 			{
@@ -166,13 +191,30 @@ int main(int argc, char** argv)
 				throw std::invalid_argument("Unknown argument: " + argument);
 			}
 		}
+		if (showLauncher && startPlaying)
+		{
+			throw std::invalid_argument("Choose a project in the launcher before starting play");
+		}
 		Aster::CommandProcessor processor(project, simulationSettings, maximumFrames == 0 && !startPlaying);
+		std::optional<std::string> historyError;
+		if (maximumFrames == 0 || explicitEditorState)
+		{
+			try
+			{
+				processor.EnableProjectHistory(editorState);
+			}
+			catch (const std::exception& error)
+			{
+				historyError = "Recent-project history unavailable: " + std::string(error.what());
+			}
+		}
+		showLauncher = showLauncher || (!explicitProject && !scenePath && maximumFrames == 0 && !startPlaying);
 		project = processor.GetAssetRoot();
 		if (!scenePath && processor.GetScenePath())
 		{
 			scenePath = *processor.GetScenePath();
 		}
-		if (!scenePath && !processor.GetStartupError() &&
+		if (!scenePath && !showLauncher && !processor.GetStartupError() &&
 			std::filesystem::is_regular_file(project / "Scenes/FeatureGallery.aster"))
 		{
 			scenePath = "Scenes/FeatureGallery.aster";
@@ -186,6 +228,15 @@ int main(int argc, char** argv)
 		Aster::Renderer renderer(options);
 		{
 			Aster::GuiLayer gui(renderer, processor, project, scenePath);
+			if (showLauncher && !processor.GetStartupError())
+			{
+				gui.ShowProjectLauncher();
+			}
+			if (historyError)
+			{
+				gui.SetStatus(processor.GetStartupError() ? *processor.GetStartupError() + "\n" + *historyError
+														  : *historyError);
+			}
 			processor.EnableRecovery();
 			if (startPlaying)
 			{

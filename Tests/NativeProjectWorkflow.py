@@ -11,6 +11,81 @@ from NativeEditorWorkflow import save_image
 from RecoveryTests import Editor as AutomationEditor
 
 
+def title_presented(driver, width, height, window_width, window_height):
+    image = driver.capture()
+    pw, ph, pixels = image
+    left, top = (width - window_width) / 2, (height - window_height) / 2
+    samples = []
+    for x in range(5, window_width - 30, 3):
+        offset = (int((top + 10) * ph / height) * pw + int((left + x) * pw / width)) * 3
+        samples.append(pixels[offset:offset + 3])
+    # The left edge distinguishes this wider window from Projects behind it.
+    return image if all(b > 90 and g > r + 15 for r, g, b in samples[:2]) and sum(
+        b > 90 and g > r + 15 for r, g, b in samples) > 170 else None
+
+
+def run_launcher_restart(executable, root, created_scene, artifacts, create_driver):
+    evidence = artifacts / "LauncherRestart"
+    evidence.mkdir(exist_ok=True)
+    for pattern in ("*.ppm", "*.png", "Launcher.json", "Input.json"):
+        for previous in evidence.glob(pattern):
+            previous.unlink()
+    expected = created_scene.read_bytes()
+    before = created_scene.stat().st_mtime_ns
+    default_scene = root / "Assets/Scenes/FeatureGallery.aster"
+    default_scene.parent.mkdir(parents=True)
+    default_scene.write_bytes(b"The launcher must not load a default sample scene")
+    with (evidence / "Editor.log").open("w+") as log, (evidence / "Input.stderr").open("w+") as diagnostics:
+        # No --project or --scene: the ordinary startup must show recent projects.
+        process = subprocess.Popen([str(executable), "--audio", "offline", "--editor-state", str(root)],
+                                   cwd=root, stdout=log, stderr=log)
+        driver = None
+        try:
+            driver = create_driver(process, evidence, diagnostics)
+            driver.initialize()
+            width, height = driver.size()
+            deadline = time.monotonic() + 30
+            image = None
+            while time.monotonic() < deadline:
+                driver.assert_alive()
+                image = title_presented(driver, width, height, 680, 420)
+                if image:
+                    break
+                time.sleep(0.05)
+            assert image, "Restart did not present the project launcher"
+            save_image(evidence / "Launcher.ppm", image)
+            driver.click(width / 2 - 160, height / 2 - 210 + 114)
+            driver.click(702, 21)
+            deadline = time.monotonic() + 30
+            while created_scene.stat().st_mtime_ns == before and time.monotonic() < deadline:
+                driver.assert_alive()
+                time.sleep(0.05)
+            assert created_scene.stat().st_mtime_ns != before, "Recent project was not reopened after restart"
+            assert created_scene.read_bytes() == expected, "Recent reopen did not adopt the exact saved scene"
+            assert default_scene.read_bytes() == b"The launcher must not load a default sample scene"
+            save_image(evidence / "Reopened.ppm", driver.capture())
+            driver.close()
+            assert process.wait(timeout=30) == 0
+        finally:
+            try:
+                if driver:
+                    try:
+                        driver.cleanup()
+                    finally:
+                        (evidence / "Input.json").write_text(json.dumps(driver.events, indent=2))
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=10)
+        log.flush()
+        assert not any(marker in (evidence / "Editor.log").read_text()
+                       for marker in ("Validation Error", "VUID-", "NVRHI Error", "Aster editor:"))
+    result = {"passed": True, "startup_launcher": True, "recent_restart_exact": True,
+              "invalid_default_scene_preserved": True}
+    (evidence / "Launcher.json").write_text(json.dumps(result, indent=2))
+    return result
+
+
 def run_startup_repair_workflow(executable, artifacts, create_driver):
     """An ordinary interactive launch must expose repair for corrupt/missing startup."""
     results = []
@@ -36,7 +111,8 @@ def run_startup_repair_workflow(executable, artifacts, create_driver):
                                     capture_output=True, timeout=30)
             assert strict.returncode != 0 and b"Aster editor:" in strict.stderr
             with (evidence / "Editor.log").open("w+") as log, (evidence / "Input.stderr").open("w+") as diagnostics:
-                process = subprocess.Popen([str(executable), "--project", str(project), "--audio", "offline"],
+                process = subprocess.Popen([str(executable), "--project", str(project), "--audio", "offline",
+                                            "--editor-state", str(root)],
                                             stdout=log, stderr=log)
                 driver = None
                 try:
@@ -117,9 +193,9 @@ def run_project_workflow(executable, source_assets, artifacts, create_driver):
     for pattern in ("*.ppm", "*.png", "Projects.json", "Input.json"):
         for previous in artifacts.glob(pattern):
             previous.unlink()
-    for name in ("CorruptStartup", "MissingStartup"):
+    for name in ("CorruptStartup", "MissingStartup", "LauncherRestart"):
         evidence = artifacts / name
-        for pattern in ("*.ppm", "*.png", "Repair.json", "Input.json"):
+        for pattern in ("*.ppm", "*.png", "Repair.json", "Launcher.json", "Input.json"):
             for previous in evidence.glob(pattern):
                 previous.unlink()
     with tempfile.TemporaryDirectory(prefix="AsterProjects-") as temporary:
@@ -147,7 +223,7 @@ def run_project_workflow(executable, source_assets, artifacts, create_driver):
         shutil.copytree(assets, alternate, ignore=shutil.ignore_patterns(".aster"))
         mesh["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"] = [0.01, 0.02, 0.9, 1]
         (alternate / "Models/Cube.gltf").write_text(json.dumps(mesh))
-        created = root / "Created"
+        created = root / "NewGame"
 
         with (artifacts / "Editor.log").open("w+") as log, (artifacts / "Input.stderr").open("w+") as diagnostics:
             process = subprocess.Popen([str(executable), "--project", str(project_file), "--audio", "offline"],
@@ -232,6 +308,24 @@ def run_project_workflow(executable, source_assets, artifacts, create_driver):
                 def field(x, y, text):
                     driver.replace_text(left + x, top + y, str(text))
 
+                browser_left, browser_top = width / 2 - 340, height / 2 - 230
+
+                def navigate(x, y):
+                    before = driver.capture()
+                    driver.click(browser_left + x, browser_top + y)
+
+                    def directory_changed():
+                        image = driver.capture()
+                        pw, ph, pixels = image
+                        different = 0
+                        for row in range(34, 54, 2):
+                            for column in range(20, 500, 2):
+                                offset = (int((browser_top + row) * ph / height) * pw +
+                                          int((browser_left + column) * pw / width)) * 3
+                                different += pixels[offset:offset + 3] != before[2][offset:offset + 3]
+                        return image if different > 24 else None
+                    wait(directory_changed, "Browser folder navigation did not update its directory")
+
                 def apply_config():
                     driver.click(left + 90, top + 316)
 
@@ -296,7 +390,11 @@ def run_project_workflow(executable, source_assets, artifacts, create_driver):
                 assert json.loads(active.read_text())["Entities"][0]["Name"] == "Camera"
 
                 projects()
-                field(150, 125, "Created")
+                driver.click(left + 550, top + 98)  # Choose parent without typing its path.
+                save_image(artifacts / "CreateParentBrowser.ppm", wait(
+                    lambda: title_presented(driver, width, height, 680, 460), "Parent chooser was not presented"))
+                navigate(624, 41)
+                driver.click(browser_left + 100, browser_top + 385)
                 field(150, 153, "Created in GUI")
                 driver.click(left + 560, top + 153)
                 created_file = created / "Project.asterproj"
@@ -318,7 +416,7 @@ def run_project_workflow(executable, source_assets, artifacts, create_driver):
                 driver.click(55, 151)
                 driver.replace_text(width - 250, 171, "Saved before project switch")
                 projects()
-                field(150, 65, "Created/Project.asterproj")
+                field(150, 65, "NewGame/Project.asterproj")
                 driver.click(left + 560, top + 65)
                 confirmation("SaveBeforeOpen")
                 driver.click(width / 2 - 153, height / 2 + 8)  # Save and continue.
@@ -327,13 +425,47 @@ def run_project_workflow(executable, source_assets, artifacts, create_driver):
                 save_scene(created_scene)
                 assert len(json.loads(created_scene.read_text())["Entities"]) == 1
                 assert original.read_bytes() == source_bytes
+
+                projects()
+                driver.click(left + 365, top + 42)  # Browse from the created project.
+                save_image(artifacts / "ProjectBrowser.ppm", wait(
+                    lambda: title_presented(driver, width, height, 680, 460), "Project browser was not presented"))
+
+                navigate(624, 41)  # Up to the shared parent.
+                navigate(150, 142)  # Primary follows NewGame in the sorted directory list.
+                driver.click(browser_left + 150, browser_top + 170)  # Project file after its two asset folders.
+                driver.click(browser_left + 100, browser_top + 385)
+                colored(2, "BrowserReopenedBlue")
+                history_file = root / ".aster/Projects.json"
+                wait(lambda: json.loads(history_file.read_text())["Projects"][0] == project_file.as_posix(),
+                     "Browser opening was not recorded as most recent")
+                projects()
+                driver.click(left + 80, top + 398)
+                save_image(artifacts / "RecentProjects.ppm", wait(
+                    lambda: title_presented(driver, width, height, 680, 420), "Recent projects were not presented"))
+                driver.click(width / 2 - 160, height / 2 - 210 + 142)  # Created is second after Primary.
+                wait(lambda: json.loads(history_file.read_text())["Projects"][0] == created_file.as_posix(),
+                     "Selecting a recent project did not update recency")
+                save_scene(created_scene)
+                assert len(json.loads(created_scene.read_text())["Entities"]) == 1
+                projects()
+                driver.click(left + 80, top + 398)
+                wait(lambda: title_presented(driver, width, height, 680, 420), "Recent list did not reopen")
+                primary_manifest = project_file.read_bytes()
+                driver.click(width / 2 - 340 + 35, height / 2 - 210 + 142)  # Forget Primary, retain Created.
+                wait(lambda: json.loads(history_file.read_text())["Projects"] == [created_file.as_posix()],
+                     "Forget did not remove only the selected history entry")
+                assert project_file.read_bytes() == primary_manifest and original.read_bytes() == source_bytes
+                save_scene(created_scene)
                 driver.close()
                 assert process.wait(timeout=30) == 0, "Project GUI shutdown failed"
                 report = {"passed": True, "initial_red_samples": red_pixels,
                           "alternate_blue_samples": blue_pixels, "same_root_preserved": True,
                           "dirty_cancel": True, "invalid_startup_and_open_preserved": True,
                           "root_cache_rebound": True,
-                          "created_and_reopened": True, "save_before_project_switch": True}
+                          "created_and_reopened": True, "save_before_project_switch": True,
+                          "browser_navigation_and_open": True, "create_parent_selection": True,
+                          "recent_selection": True, "forget_preserves_project": True}
             finally:
                 try:
                     if driver:
@@ -348,6 +480,7 @@ def run_project_workflow(executable, source_assets, artifacts, create_driver):
             log.flush()
             assert not any(marker in (artifacts / "Editor.log").read_text()
                            for marker in ("Validation Error", "VUID-", "NVRHI Error", "Aster editor:"))
+        report["launcher_restart"] = run_launcher_restart(executable, root, created_scene, artifacts, create_driver)
         report["startup_repair"] = run_startup_repair_workflow(executable, artifacts, create_driver)
         (artifacts / "Projects.json").write_text(json.dumps(report, indent=2))
     print("Native GUI project configuration, dirty protection, root rebinding, creation and opening passed")

@@ -24,6 +24,7 @@ namespace Aster
 		void RunFrame();
 		[[nodiscard]] RenderSettings GetRenderSettings() const;
 		void SetStatus(std::string status);
+		void ShowProjectLauncher();
 
 	  private:
 		class Impl;

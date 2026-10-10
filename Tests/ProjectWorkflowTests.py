@@ -190,6 +190,26 @@ def main():
         assert json.loads(repaired_output.read_text()) == pending_repair
         assert bad_startup.read_bytes() == b"Corrupt startup must be preserved"
 
+        editor_state = root / "Shared editor state"
+        editor_state.mkdir()
+        with AutomationEditor(editor, repair_assets, editor_state) as first_history, \
+             AutomationEditor(editor, repair_assets, editor_state) as second_history:
+            first_history.get("project.open", path=str(repair_project))
+            second_history.get("project.open", path=str(manifest))
+            recent = first_history.get("project.recent")
+            assert recent == {"enabled": True, "projects": [manifest.as_posix(), repair_project.as_posix()]}
+            before_rejection = (editor_state / ".aster/Projects.json").read_bytes()
+            assert not first_history.request("project.open", path=str(root / "Missing.asterproj"))["ok"]
+            assert (editor_state / ".aster/Projects.json").read_bytes() == before_rejection
+            second_history.get("project.forget", path=str(manifest))
+            assert first_history.get("project.recent")["projects"] == [repair_project.as_posix()]
+            assert manifest.read_bytes() == original, "Forgetting history changed the project file"
+        with AutomationEditor(editor, repair_assets, editor_state) as restarted_history:
+            assert {"project.browse", "project.recent", "project.forget"} <= set(restarted_history.get("help"))
+            assert restarted_history.get("project.recent")["projects"] == [repair_project.as_posix()]
+            browser = restarted_history.get("project.browse", path=str(source))
+            assert any(entry["path"] == manifest.as_posix() and not entry["directory"] for entry in browser["entries"])
+
         (source / "Assets/Scripts").mkdir()
         (source / "Assets/Scripts/Actor.lua").write_text(
             'return {OnCreate=function(self, entity) '
